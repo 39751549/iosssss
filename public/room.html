@@ -88,12 +88,13 @@
     <div id="nowPlaying" style="margin-bottom:14px"></div>
 
     <div class="form-row">
-      <label class="form-label">搜索歌曲</label>
+      <label class="form-label">搜索歌曲（本地曲库 + 在线曲库）</label>
       <div class="row">
         <input class="input" id="songQuery" placeholder="输入歌名或歌手"
                onkeydown="if(event.key==='Enter')searchMusic()">
         <button class="btn btn-primary" style="flex:none;padding:12px 16px" onclick="searchMusic()">搜索</button>
       </div>
+      <div class="src-picker" id="srcPicker"></div>
     </div>
 
     <div id="searchResult" style="margin-top:12px"></div>
@@ -717,49 +718,75 @@ audio.volume = 0.85;
 
 /* ---------- 搜索曲库 ---------- */
 let searchTimer = null;
+let lastSearchList = [];   // 最近一次搜索结果（按下标点播/加入）
+let musicSource = VR.LS.get('musicSource', 'netease');
+const SRC_NAMES = { netease: '网易云', tencent: 'QQ', kugou: '酷狗', kuwo: '酷我', migu: '咪咕' };
+
+// 音源选择条
+(function initSrcPicker() {
+  const box = document.getElementById('srcPicker');
+  if (!box) return;
+  box.innerHTML = Object.keys(SRC_NAMES).map(s =>
+    `<span class="src-chip ${s === musicSource ? 'sel' : ''}" data-src="${s}" onclick="pickSrc('${s}')">${SRC_NAMES[s]}</span>`
+  ).join('');
+})();
+function pickSrc(s) {
+  musicSource = s;
+  VR.LS.set('musicSource', s);
+  document.querySelectorAll('#srcPicker .src-chip').forEach(el => el.classList.toggle('sel', el.dataset.src === s));
+}
+
 async function searchMusic() {
   const q = (document.getElementById('songQuery').value || '').trim();
   const box = document.getElementById('searchResult');
   box.innerHTML = '<div class="empty-hint" style="padding:12px 0">搜索中…</div>';
 
   try {
-    const res = await fetch('/api/music/search?q=' + encodeURIComponent(q));
+    const res = await fetch('/api/music/search?q=' + encodeURIComponent(q) + '&source=' + encodeURIComponent(musicSource));
     const j = await res.json();
     if (!j.ok) throw new Error();
 
-    if (!j.list.length) {
+    lastSearchList = j.list || [];
+
+    if (!lastSearchList.length) {
       box.innerHTML = `<div class="empty-hint" style="padding:12px 0">
         ${q ? '没有找到「' + VR.esc(q) + '」<br>试试其他关键词' : '曲库还是空的'}</div>`;
       return;
     }
 
+    if (j.gdError) VR.toast('在线曲库暂不可用，仅显示本地曲库', 'err');
+
     box.innerHTML = `
-      <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">找到 ${j.total} 首</div>
-      ${j.list.map(m => `
+      <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">找到 ${lastSearchList.length} 首</div>
+      ${lastSearchList.map((m, i) => `
         <div class="song-item">
-          <div class="sicon">🎵</div>
+          <div class="sicon">${m.remote ? '☁️' : '🎵'}</div>
           <div class="song-meta">
             <div class="st">${VR.esc(m.title)}</div>
-            <div class="sb">${VR.esc(m.artist || '未知')}</div>
+            <div class="sb">${VR.esc(m.artist || '未知')}${m.remote ? ' · ' + VR.esc(SRC_NAMES[m.source] || m.source || '在线') : ' · 本地'}</div>
           </div>
-          <button class="btn btn-sm btn-primary" onclick="playFromLibrary('${m.id}')">点播</button>
-          <button class="btn btn-sm" onclick="addFromLibrary('${m.id}')">加入</button>
+          <button class="btn btn-sm btn-primary" onclick="playFromLibrary(${i})">点播</button>
+          <button class="btn btn-sm" onclick="addFromLibrary(${i})">加入</button>
         </div>`).join('')}`;
   } catch {
     box.innerHTML = '<div class="empty-hint" style="padding:12px 0">搜索失败，请检查网络</div>';
   }
 }
 
-/** 立即点播（全房间同步切歌） */
-function playFromLibrary(libraryId) {
-  send({ type: 'music:play-now', libraryId, by: ME.name });
+/** 立即点播（全房间同步切歌；在线歌曲由服务器实时解析直链） */
+function playFromLibrary(i) {
+  const m = lastSearchList[i];
+  if (!m) return;
+  send({ type: 'music:play-now', libraryId: m.id, title: m.title, artist: m.artist || '', by: ME.name });
   VR.toast('正在为全房间点播…', 'ok');
   VR.haptic();
 }
 
 /** 加入歌单（不打断当前播放） */
-function addFromLibrary(libraryId) {
-  send({ type: 'music:add', libraryId, by: ME.name });
+function addFromLibrary(i) {
+  const m = lastSearchList[i];
+  if (!m) return;
+  send({ type: 'music:add', libraryId: m.id, title: m.title, artist: m.artist || '', by: ME.name });
   VR.toast('已加入歌单', 'ok');
   VR.haptic();
 }

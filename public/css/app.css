@@ -381,6 +381,19 @@ input, textarea { outline: none; }
 /* 房主点主位空位可回到 0 号 */
 .host-empty.can-sit { cursor: pointer; }
 .host-empty.can-sit .hc { opacity: 1; border-color: rgba(255,201,60,.7); box-shadow: 0 0 12px rgba(255,201,60,.25); }
+
+/* ---------- 音源选择条 ---------- */
+.src-picker { display: flex; gap: 7px; margin-top: 9px; flex-wrap: wrap; }
+.src-chip {
+  font-size: 11.5px; font-weight: 600; color: var(--text-dim);
+  padding: 4px 11px; border-radius: 999px;
+  background: rgba(255,255,255,.07); border: 1px solid var(--border);
+  cursor: pointer; transition: all .15s;
+}
+.src-chip.sel {
+  color: #fff; background: linear-gradient(135deg, var(--brand), var(--brand-2));
+  border-color: transparent; box-shadow: 0 2px 8px rgba(123,107,255,.4);
+}
 .seat .sname {
   font-size: 11.5px; font-weight: 600; max-width: 100%;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

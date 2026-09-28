@@ -4,6 +4,7 @@
  * 依赖：仅 ws
  */
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -16,6 +17,78 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'store.json');
 // 音乐文件存放目录（上传的音频）
 const MUSIC_DIR = path.join(DATA_DIR, 'music');
+
+/* ================= 在线曲库（GD Studio 免费 API） =================
+ * 搜索: https://music-api.gdstudio.xyz/api.php?types=search&source=netease&name=xx&count=20
+ * 取播放直链: https://music-api.gdstudio.xyz/api.php?types=url&source=netease&id=xx&br=320
+ * 远端歌曲 libraryId 约定: "gd|<source>|<songId>"
+ * 直链有时效（约 20 分钟），播放前实时解析并缓存 10 分钟。
+ */
+const GD_API = 'https://music-api.gdstudio.xyz/api.php';
+const GD_SOURCES = [
+  { id: 'netease', name: '网易云' },
+  { id: 'tencent', name: 'QQ' },
+  { id: 'kugou',   name: '酷狗' },
+  { id: 'kuwo',    name: '酷我' },
+  { id: 'migu',    name: '咪咕' }
+];
+const gdUrlCache = new Map(); // key: source|id|br -> { url, at }
+
+function gdFetchJson(params) {
+  return new Promise((resolve, reject) => {
+    const qs = Object.entries(params).map(([k, v]) => k + '=' + encodeURIComponent(v)).join('&');
+    const req = https.get(GD_API + '?' + qs, { timeout: 12000 }, res => {
+      if (res.statusCode !== 200) { res.resume(); return reject(new Error('GD API HTTP ' + res.statusCode)); }
+      let raw = '';
+      res.setEncoding('utf8');
+      res.on('data', c => { raw += c; if (raw.length > 2e6) req.destroy(); });
+      res.on('end', () => {
+        try { resolve(JSON.parse(raw)); } catch (e) { reject(new Error('GD API 返回不是 JSON')); }
+      });
+    });
+    req.on('timeout', () => { req.destroy(new Error('GD API 超时')); });
+    req.on('error', reject);
+  });
+}
+
+async function gdSearch(name, source, count) {
+  const arr = await gdFetchJson({ types: 'search', source: source || 'netease', name, count: String(count || 20), pages: '1' });
+  if (!Array.isArray(arr)) return [];
+  return arr.map(m => ({
+    id: 'gd|' + (m.source || source || 'netease') + '|' + m.id,
+    title: String(m.name || '未知歌曲'),
+    artist: Array.isArray(m.artist) ? m.artist.join(' / ') : String(m.artist || ''),
+    album: String(m.album || ''),
+    url: '', size: 0, remote: true, source: m.source || source || 'netease'
+  }));
+}
+
+async function gdResolveUrl(source, songId, br) {
+  const key = source + '|' + songId + '|' + (br || 320);
+  const hit = gdUrlCache.get(key);
+  if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.url;
+  const j = await gdFetchJson({ types: 'url', source, id: String(songId), br: String(br || 320) });
+  if (!j || !j.url) throw new Error('拿不到播放地址');
+  gdUrlCache.set(key, { url: j.url, at: Date.now() });
+  if (gdUrlCache.size > 500) gdUrlCache.clear();
+  return j.url;
+}
+
+/** 解析歌单条目的真实播放地址（远端歌实时解析，本地歌原样返回） */
+async function resolveSongUrl(song) {
+  if (!song || !song.remote || !song.libraryId) return song ? song.url : '';
+  try {
+    const [, source, songId] = String(song.libraryId).split('|');
+    song.url = await gdResolveUrl(source, songId, 320);
+  } catch { /* 保留旧 url 或空 */ }
+  return song.url;
+}
+
+function parseGdLibraryId(libraryId) {
+  const parts = String(libraryId || '').split('|');
+  if (parts.length !== 3 || parts[0] !== 'gd') return null;
+  return { source: parts[1], songId: parts[2] };
+}
 
 /* ================= 数据 ================= */
 const DEFAULT_CONFIG = {
@@ -180,9 +253,10 @@ const server = http.createServer((req, res) => {
   }
   if (pathname === '/api/config') return send(res, 200, JSON.stringify({ ok: true, giftList: store.config.giftList }));
 
-  /* ---------- 曲库搜索（用户端，无需密码） ---------- */
+  /* ---------- 曲库搜索（本地曲库 + 在线曲库，无需密码） ---------- */
   if (pathname === '/api/music/search') {
     const q = (url.searchParams.get('q') || '').trim().toLowerCase();
+    const gdSource = url.searchParams.get('source') || 'netease';
     let list = store.library;
     if (q) {
       list = list.filter(m =>
@@ -190,12 +264,20 @@ const server = http.createServer((req, res) => {
         (m.artist || '').toLowerCase().includes(q)
       );
     }
-    // 最多返回 40 条
-    const result = list.slice(0, 40).map(m => ({
+    // 本地曲库（最多 40 条）
+    const local = list.slice(0, 40).map(m => ({
       id: m.id, title: m.title, artist: m.artist || '',
-      url: '/api/music/file/' + m.id, size: m.size || 0
+      url: '/api/music/file/' + m.id, size: m.size || 0, remote: false
     }));
-    return send(res, 200, JSON.stringify({ ok: true, total: list.length, list: result }));
+    // 在线曲库（有关键词时追加 GD Studio 结果）
+    const finish = (gd, gdErr) => {
+      const result = local.concat(gd || []);
+      send(res, 200, JSON.stringify({ ok: true, total: result.length, list: result, sources: GD_SOURCES, gdError: gdErr || '' }));
+    };
+    if (!q) return finish([], '');
+    return gdSearch(q, gdSource, 20)
+      .then(gd => finish(gd, ''))
+      .catch(e => finish([], e.message || '在线曲库暂不可用'));
   }
 
   /* ---------- 音频流式播放（支持 Range，iOS 需要） ---------- */
@@ -562,7 +644,7 @@ wss.on('connection', (ws) => {
   ws.on('pong', () => { ws.isAlive = true; });
   const reply = (m) => { if (ws.readyState === 1) ws.send(JSON.stringify(m)); };
 
-  ws.on('message', (buf) => {
+  ws.on('message', async (buf) => {
     let msg;
     try { msg = JSON.parse(buf.toString()); } catch { return reply({ type: 'error', msg: '消息格式错误' }); }
 
@@ -782,60 +864,94 @@ wss.on('connection', (ws) => {
         break;
       }
 
-      /* 从曲库点播：支持两种入参
-         - libraryId: 直接点播曲库里的某首歌
-         - url + title: 兼容旧的"贴外链"方式
-      */
+      /* 加入歌单：支持本地曲库 / 在线曲库（gd|源|歌id）/ 外链 */
       case 'music:add': {
         const rt = runtime.get(joinedRoom); if (!rt) return;
 
         let song = null;
-        if (msg.libraryId) {
+        const gd = parseGdLibraryId(msg.libraryId);
+        if (gd) {
+          // 在线曲库：歌单里存引用，播放时才解析直链（直链有时效）
+          song = {
+            id: uid('s'), title: safeStr(msg.title, 60) || '在线歌曲',
+            artist: safeStr(msg.artist, 80),
+            url: '', libraryId: String(msg.libraryId), remote: true,
+            by: safeStr(msg.by, 20), at: Date.now()
+          };
+          const exist = rt.playlist.find(s => s.libraryId === song.libraryId);
+          if (exist) {
+            await resolveSongUrl(exist);
+            rt.currentSong = exist; rt.playing = true; rt.startedAt = Date.now();
+            pushSnapshot(joinedRoom);
+            return reply({ type: 'music:playing', data: { title: exist.title } });
+          }
+        } else if (msg.libraryId) {
           const item = store.library.find(m => m.id === String(msg.libraryId));
           if (!item) return reply({ type: 'error', msg: '歌曲不存在' });
           song = {
             id: uid('s'),
-            title: item.title,
-            artist: item.artist || '',
+            title: safeStr(msg.title, 60) || item.title,
+            artist: safeStr(msg.artist, 80) || item.artist || '',
             url: '/api/music/file/' + item.id,
             libraryId: item.id,
             by: safeStr(msg.by, 20),
             at: Date.now()
           };
         } else {
-          const url = safeStr(msg.url, 500);
-          if (!/^https?:\/\//i.test(url)) return reply({ type: 'error', msg: '请填写 http(s) 开头的音频地址' });
+          const url2 = safeStr(msg.url, 500);
+          if (!/^https?:\/\//i.test(url2)) return reply({ type: 'error', msg: '请填写 http(s) 开头的音频地址' });
           song = { id: uid('s'), title: safeStr(msg.title, 60) || '未知歌曲',
-                   artist: safeStr(msg.artist, 60), url, by: safeStr(msg.by, 20), at: Date.now() };
+                   artist: safeStr(msg.artist, 60), url: url2, by: safeStr(msg.by, 20), at: Date.now() };
         }
 
-        // 已在歌单里就不重复加
-        const exist = rt.playlist.find(s => s.url === song.url);
-        if (exist) {
-          rt.currentSong = exist; rt.playing = true; rt.startedAt = Date.now();
-          pushSnapshot(joinedRoom);
-          return reply({ type: 'music:playing', data: { title: exist.title } });
+        // 本地/外链歌曲按 url 去重
+        if (!song.remote) {
+          const exist = rt.playlist.find(s => s.url === song.url);
+          if (exist) {
+            rt.currentSong = exist; rt.playing = true; rt.startedAt = Date.now();
+            pushSnapshot(joinedRoom);
+            return reply({ type: 'music:playing', data: { title: exist.title } });
+          }
         }
 
         rt.playlist.push(song);
-        if (!rt.currentSong) { rt.currentSong = song; rt.playing = true; rt.startedAt = Date.now(); }
+        if (!rt.currentSong) {
+          await resolveSongUrl(song);
+          rt.currentSong = song; rt.playing = true; rt.startedAt = Date.now();
+        }
         pushSnapshot(joinedRoom);
         break;
       }
 
-      /* 立即点播（替换当前歌曲，不入歌单） */
+      /* 立即点播（替换当前歌曲；本地曲库 / 在线曲库均可） */
       case 'music:play-now': {
         const rt = runtime.get(joinedRoom); if (!rt) return;
-        const item = store.library.find(m => m.id === String(msg.libraryId));
-        if (!item) return reply({ type: 'error', msg: '歌曲不存在' });
-        const song = {
-          id: uid('s'), title: item.title, artist: item.artist || '',
-          url: '/api/music/file/' + item.id, libraryId: item.id,
-          by: safeStr(msg.by, 20), at: Date.now()
-        };
-        const exist = rt.playlist.find(s => s.url === song.url);
+        const gd = parseGdLibraryId(msg.libraryId);
+        let song;
+        if (gd) {
+          song = {
+            id: uid('s'), title: safeStr(msg.title, 60) || '在线歌曲',
+            artist: safeStr(msg.artist, 80),
+            url: '', libraryId: String(msg.libraryId), remote: true,
+            by: safeStr(msg.by, 20), at: Date.now()
+          };
+          try { song.url = await gdResolveUrl(gd.source, gd.songId, 320); }
+          catch { return reply({ type: 'error', msg: '这首歌曲暂时拿不到播放地址，换一首试试' }); }
+        } else {
+          const item = store.library.find(m => m.id === String(msg.libraryId));
+          if (!item) return reply({ type: 'error', msg: '歌曲不存在' });
+          song = {
+            id: uid('s'),
+            title: safeStr(msg.title, 60) || item.title,
+            artist: safeStr(msg.artist, 80) || item.artist || '',
+            url: '/api/music/file/' + item.id, libraryId: item.id,
+            by: safeStr(msg.by, 20), at: Date.now()
+          };
+        }
+        const exist = rt.playlist.find(s => s.libraryId && s.libraryId === song.libraryId);
         if (!exist) rt.playlist.push(song);
         rt.currentSong = exist || song;
+        rt.currentSong.url = song.url; // 重新解析，避免直链过期
         rt.playing = true; rt.startedAt = Date.now();
         pushSnapshot(joinedRoom);
         break;
@@ -849,11 +965,12 @@ wss.on('connection', (ws) => {
         if (a === 'next' && rt.playlist.length) {
           const idx = rt.playlist.findIndex(s => rt.currentSong && s.id === rt.currentSong.id);
           rt.currentSong = rt.playlist[(idx + 1) % rt.playlist.length];
+          await resolveSongUrl(rt.currentSong); // 远端歌重取直链
           rt.playing = true; rt.startedAt = Date.now();
         }
         if (a === 'select' && msg.songId) {
           const s = rt.playlist.find(x => x.id === msg.songId);
-          if (s) { rt.currentSong = s; rt.playing = true; rt.startedAt = Date.now(); }
+          if (s) { await resolveSongUrl(s); rt.currentSong = s; rt.playing = true; rt.startedAt = Date.now(); }
         }
         if (a === 'remove' && msg.songId) {
           rt.playlist = rt.playlist.filter(x => x.id !== msg.songId);

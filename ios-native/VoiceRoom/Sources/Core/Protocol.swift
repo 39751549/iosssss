@@ -68,9 +68,9 @@ enum VRClientMessage {
     case chat(userId: String, text: String)
     case giftSend(userId: String, giftId: String, count: Int, toClientId: String)
     /// 加入歌单：libraryId 优先（曲库点播），否则用 url + title（外链）
-    case musicAdd(title: String, url: String, by: String, libraryId: String?)
+    case musicAdd(title: String, artist: String, url: String, by: String, libraryId: String?)
     /// 立即点播：替换当前歌曲
-    case musicPlayNow(libraryId: String, by: String)
+    case musicPlayNow(libraryId: String, by: String, title: String?, artist: String?)
     case musicControl(action: String, songId: String?)
     // WebRTC 信令
     case rtcOffer(to: String, sdp: String)
@@ -139,13 +139,17 @@ enum VRClientMessage {
             return ["type": "gift:send", "userId": userId, "giftId": giftId,
                     "count": count, "toClientId": toClientId]
 
-        case let .musicAdd(title, url, by, libraryId):
+        case let .musicAdd(title, artist, url, by, libraryId):
             var p: [String: Any] = ["type": "music:add", "title": title, "url": url, "by": by]
+            if !artist.isEmpty { p["artist"] = artist }
             if let libraryId { p["libraryId"] = libraryId }
             return p
 
-        case let .musicPlayNow(libraryId, by):
-            return ["type": "music:play-now", "libraryId": libraryId, "by": by]
+        case let .musicPlayNow(libraryId, by, title, artist):
+            var p: [String: Any] = ["type": "music:play-now", "libraryId": libraryId, "by": by]
+            if let title { p["title"] = title }
+            if let artist, !artist.isEmpty { p["artist"] = artist }
+            return p
 
         case let .musicControl(action, songId):
             var p: [String: Any] = ["type": "music:control", "action": action]

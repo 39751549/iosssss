@@ -338,19 +338,19 @@ final class AppState: ObservableObject {
 
     // MARK: - 音乐
 
-    /// 加入歌单（曲库歌曲，按 libraryId）
-    func addLibrarySong(libraryId: String, by: String) {
-        connection.send(.musicAdd(title: "", url: "", by: by, libraryId: libraryId))
+    /// 加入歌单（曲库歌曲，按 libraryId；在线歌曲带上歌名方便歌单展示）
+    func addLibrarySong(libraryId: String, title: String = "", artist: String = "", by: String) {
+        connection.send(.musicAdd(title: title, artist: artist, url: "", by: by, libraryId: libraryId))
     }
 
     /// 加入歌单（外链）
     func addSongByURL(title: String, url: String) {
-        connection.send(.musicAdd(title: title, url: url, by: me?.name ?? "未知", libraryId: nil))
+        connection.send(.musicAdd(title: title, artist: "", url: url, by: me?.name ?? "未知", libraryId: nil))
     }
 
-    /// 立即点播（全房间同步切歌）
-    func playLibrarySong(libraryId: String, by: String) {
-        connection.send(.musicPlayNow(libraryId: libraryId, by: by))
+    /// 立即点播（全房间同步切歌；在线歌曲由服务器实时解析直链）
+    func playLibrarySong(libraryId: String, by: String, title: String? = nil, artist: String? = nil) {
+        connection.send(.musicPlayNow(libraryId: libraryId, by: by, title: title, artist: artist))
     }
 
     func musicControl(_ action: String, songId: String? = nil) {

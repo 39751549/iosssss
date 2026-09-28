@@ -616,11 +616,19 @@ struct MusicSheet: View {
 
     /// 立即点播：全房间同步切歌，并写入最近听歌
     private func playNow(_ song: VRLibrarySong) {
+        if song.url.isEmpty {
+            // 在线曲库歌曲（GD 直链由服务器实时解析，全房间同步）
+            app.playLibrarySong(libraryId: song.id, by: app.me?.name ?? "我",
+                                title: song.title, artist: song.artist)
+            app.showToast("正在为全房间点播…", kind: .success)
+            return
+        }
         guard let url = song.playURL?.absoluteString else {
             app.showToast("歌曲地址无效", kind: .error)
             return
         }
-        app.playLibrarySong(libraryId: song.id, by: app.me?.name ?? "我")
+        app.playLibrarySong(libraryId: song.id, by: app.me?.name ?? "我",
+                            title: song.title, artist: song.artist)
         history.recordPlay(songId: song.id, title: song.title, artist: song.artist,
                            url: url, source: .library)
         app.showToast("正在为全房间点播…", kind: .success)
@@ -628,12 +636,17 @@ struct MusicSheet: View {
 
     /// 加入歌单：不打断当前播放
     private func addToPlaylist(_ song: VRLibrarySong) {
-        app.addLibrarySong(libraryId: song.id, by: app.me?.name ?? "我")
+        app.addLibrarySong(libraryId: song.id, title: song.title, artist: song.artist,
+                           by: app.me?.name ?? "我")
         app.showToast("已加入歌单", kind: .success)
     }
 
     /// 手动缓存
     private func download(_ song: VRLibrarySong) {
+        guard !song.url.isEmpty else {
+            app.showToast("在线歌曲边播边听，无需缓存", kind: .info)
+            return
+        }
         cache.download(song, base: VRConfig.baseURL)
     }
 
