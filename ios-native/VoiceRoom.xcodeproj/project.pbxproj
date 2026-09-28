@@ -245,6 +245,9 @@
 				Base,
 			);
 			mainGroup = A1000005000000000000001;
+			packageReferences = (
+				A100000C000000000000001 /* XCRemoteSwiftPackageReference "WebRTC" */,
+			);
 			productRefGroup = A1000005000000000000009 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
