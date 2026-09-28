@@ -1,0 +1,1052 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0B1020">
+<title>语音房</title>
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body class="bg-aurora">
+
+<div class="app" id="app">
+
+  <!-- 顶栏 -->
+  <div class="topbar">
+    <button class="icon-btn" onclick="leaveRoom()">‹</button>
+    <div class="room-chip" onclick="openSheet('sheetRoomSettings')">
+      <span class="rno" id="roomNo">------</span>
+      <span class="rname" id="roomName">加载中…</span>
+      <span class="cnt" id="roomCount">0</span>
+    </div>
+    <button class="icon-btn" id="btnHeadset" onclick="toggleSpeaker()" title="扬声器">🔊</button>
+    <button class="icon-btn" onclick="openSheet('sheetMembers')" title="成员">👥</button>
+    <button class="icon-btn" onclick="openSheet('sheetRoomSettings')" title="房间设置">⋮</button>
+  </div>
+
+  <!-- 右侧悬浮音乐按钮 -->
+  <button class="fab-music" id="fabMusic" onclick="openSheet('sheetMusic')">
+    <div class="fm-disc"><span class="fm-note" id="fabNote">🎵</span></div>
+    <div class="fm-title" id="fabTitle" style="display:none">一起听歌</div>
+  </button>
+
+  <!-- 麦位：顶部房主主位 + 2x4 宾客麦位 -->
+  <div class="stage">
+    <div class="host-row" id="hostRow"></div>
+    <div class="seat-grid" id="seatGrid"></div>
+  </div>
+
+  <!-- 公屏 -->
+  <div class="chatwrap">
+    <div class="chat-list" id="chatList"></div>
+  </div>
+
+  <!-- 底部工具栏 -->
+  <div class="bottombar">
+    <button class="icon-btn" id="btnMic" onclick="toggleMic()" title="麦克风">🎤</button>
+    <button class="icon-btn" onclick="openSheet('sheetGift')" title="礼物">🎁</button>
+    <input class="chat-input" id="chatInput" placeholder="说点什么…" maxlength="200"
+           onkeydown="if(event.key==='Enter')sendChat()">
+    <button class="icon-btn" onclick="sendChat()" title="发送">➤</button>
+    <button class="icon-btn" onclick="openSheet('sheetMusic')" title="听歌">🎵</button>
+  </div>
+</div>
+
+<div class="sheet-mask" id="mask" onclick="VR.closeSheet()"></div>
+
+<!-- ===== 礼物面板 ===== -->
+<div class="sheet" id="sheetGift">
+  <div class="sheet-handle"></div>
+  <div class="sheet-title">
+    <span>送礼物 🎁</span>
+    <span style="font-size:13px;color:var(--gold);font-weight:700">💰 <span id="giftCoins">0</span></span>
+  </div>
+  <div class="sheet-body">
+    <div class="form-label" style="margin-bottom:8px">送给谁</div>
+    <div id="giftTargets" style="display:flex;gap:9px;overflow-x:auto;padding-bottom:11px"></div>
+
+    <div class="form-label" style="margin:14px 0 8px">选礼物</div>
+    <div class="gift-grid" id="giftGrid"></div>
+
+    <div style="display:flex;align-items:center;justify-content:center;gap:14px;margin:16px 0 6px">
+      <button class="icon-btn" onclick="setCount(-1)">−</button>
+      <div style="font-size:19px;font-weight:800;min-width:44px;text-align:center" id="giftCount">1</div>
+      <button class="icon-btn" onclick="setCount(1)">＋</button>
+    </div>
+    <button class="btn btn-pink btn-block" onclick="sendGift()">送出 · <span id="giftCost">1</span> 金币</button>
+    <div class="tip" style="margin:13px 0 4px">金币不足时，可在管理后台给自己发放（<b>纯娱乐虚拟币，不涉及充值</b>）。</div>
+  </div>
+</div>
+
+<!-- ===== 听歌面板 ===== -->
+<div class="sheet" id="sheetMusic">
+  <div class="sheet-handle"></div>
+  <div class="sheet-title">一起听歌 🎵</div>
+  <div class="sheet-body">
+    <div id="nowPlaying" style="margin-bottom:14px"></div>
+
+    <div class="form-row">
+      <label class="form-label">搜索歌曲</label>
+      <div class="row">
+        <input class="input" id="songQuery" placeholder="输入歌名或歌手"
+               onkeydown="if(event.key==='Enter')searchMusic()">
+        <button class="btn btn-primary" style="flex:none;padding:12px 16px" onclick="searchMusic()">搜索</button>
+      </div>
+    </div>
+
+    <div id="searchResult" style="margin-top:12px"></div>
+
+    <div class="form-label" style="margin:18px 0 8px">房间歌单</div>
+    <div id="playlist"></div>
+  </div>
+</div>
+
+<!-- ===== 成员面板 ===== -->
+<div class="sheet" id="sheetMembers">
+  <div class="sheet-handle"></div>
+  <div class="sheet-title">房间成员 👥 <span class="sub" id="memberCount"></span></div>
+  <div class="sheet-body"><div id="memberList"></div><div style="height:8px"></div></div>
+</div>
+
+<!-- ===== 房间设置（房主） ===== -->
+<div class="sheet" id="sheetRoomSettings">
+  <div class="sheet-handle"></div>
+  <div class="sheet-title">房间设置 ⚙️</div>
+  <div class="sheet-body">
+    <div class="form-row">
+      <label class="form-label">房间号（点一下复制）</label>
+      <div class="input" style="font-family:ui-monospace,monospace;font-weight:800;letter-spacing:2px;color:var(--gold)"
+           id="setRoomNo" onclick="VR.copy(document.getElementById('setRoomNo').textContent)"></div>
+    </div>
+    <div class="form-row">
+      <label class="form-label">房间名称</label>
+      <input class="input" id="setRoomName" maxlength="22">
+    </div>
+    <div class="form-row">
+      <label class="form-label">动态背景（房间内所有人可见）</label>
+      <div class="bg-picker" id="setBgPicker"></div>
+    </div>
+    <div class="form-row">
+      <label class="form-label">自定义背景图（上传后自动生效）</label>
+      <div class="row">
+        <div id="setCustomBgPreview" class="input" style="display:flex;align-items:center;gap:10px;min-height:46px;color:var(--text-dim);font-size:12.5px">未设置</div>
+        <button class="btn" style="flex:none;padding:12px 16px" onclick="document.getElementById('setBgFile').click()">📷 上传</button>
+      </div>
+      <input type="file" id="setBgFile" accept="image/*" style="display:none">
+    </div>
+    <button class="btn btn-primary btn-block" style="margin:16px 0 6px" onclick="saveRoomSettings()">保存</button>
+    <button class="btn btn-block" id="btnDestroyRoom" style="margin:8px 0 6px;border-color:rgba(255,92,108,.5);color:var(--red)"
+            onclick="destroyMyRoom()">🗑️ 解散我的永久房间</button>
+    <div class="tip" style="margin:10px 0 4px">只有房主能修改房间名和背景。房间是永久的，解散后可重新创建。</div>
+  </div>
+</div>
+
+<!-- ===== 个人名片弹窗 ===== -->
+<div class="modal-mask" id="modalCard" onclick="VR.closeModal('modalCard')">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div id="cardBody"></div>
+  </div>
+</div>
+
+<!-- ===== 我的资料编辑弹窗 ===== -->
+<div class="modal-mask" id="modalEdit">
+  <div class="modal" onclick="event.stopPropagation()">
+    <h3>编辑我的名片</h3>
+    <div class="form-row" style="margin-top:14px">
+      <label class="form-label">头像</label>
+      <div class="avatar-picker">
+        <div id="roomEditAvatar"></div>
+        <div class="avatar-actions">
+          <button class="btn btn-sm" onclick="document.getElementById('roomAvatarFile').click()">📷 上传</button>
+          <button class="btn btn-sm" onclick="roomRandomAvatar()">🎲 随机</button>
+        </div>
+      </div>
+      <input type="file" id="roomAvatarFile" accept="image/*" style="display:none">
+    </div>
+    <div class="form-row">
+      <label class="form-label">昵称</label>
+      <input class="input" id="roomEditName" maxlength="20">
+    </div>
+    <div class="form-row">
+      <label class="form-label">性别</label>
+      <div class="seg" id="roomEditGender">
+        <button data-g="male">♂ 男生</button>
+        <button data-g="female">♀ 女生</button>
+        <button data-g="secret">保密</button>
+      </div>
+    </div>
+    <div class="form-row">
+      <label class="form-label">个性签名</label>
+      <input class="input" id="roomEditBio" maxlength="60">
+    </div>
+    <div class="row" style="margin-top:16px">
+      <button class="btn" onclick="VR.closeModal('modalEdit')">取消</button>
+      <button class="btn btn-primary" onclick="saveRoomProfile()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 隐藏的音频元素 -->
+<audio id="musicPlayer" preload="auto"></audio>
+
+<script src="/js/common.js"></script>
+<script>
+/* ================= 状态 ================= */
+let ME = null, USER_ID = null;
+let roomId = null, clientId = null;
+let STATE = null;             // 房间快照
+let giftList = [];
+let selGiftId = null, selGiftCount = 1, selTargetClientId = null;
+let editAvatarData = null, editGenderSel = 'secret';
+let roomSettingsDirty = false;
+
+/* 语音相关 */
+let micOn = false, speakerOn = true;
+let localStream = null;
+const peers = new Map();      // remoteClientId -> RTCPeerConnection
+let audioCtx = null, analyserMap = new Map(), speakingTimer = null;
+
+const RTC_CONFIG = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+/* ================= 启动 ================= */
+(function init() {
+  USER_ID = VR.LS.get('userId', null);
+  ME = VR.LS.get('user', null);
+  const params = new URLSearchParams(location.search);
+  roomId = params.get('room');
+  if (!roomId) { location.href = '/'; return; }
+  if (!USER_ID || !ME) { location.href = '/'; return; }
+
+  connectWS();
+  renderSetBgPicker();
+  document.getElementById('roomAvatarFile').addEventListener('change', onRoomAvatarFile);
+})();
+
+function connectWS() {
+  const ws = VR.connect(onMsg, () => {
+    ws.send(JSON.stringify({ type: 'auth', userId: USER_ID }));
+    ws.send(JSON.stringify({ type: 'room:join', userId: USER_ID, roomId }));
+  }, () => {
+    VR.toast('连接断开，正在重连…', 'err');
+    setTimeout(connectWS, 2200);
+  });
+  window.WS = ws;
+}
+function send(o) { if (window.WS && window.WS.readyState === 1) window.WS.send(JSON.stringify(o)); }
+
+/* ================= 消息处理 ================= */
+function onMsg(m) {
+  switch (m.type) {
+    case 'auth:ok':
+      ME = m.data.user; giftList = m.data.giftList || []; VR.LS.set('user', ME);
+      break;
+
+    case 'join:ok':
+      clientId = m.data.clientId;
+      break;
+
+    case 'room:state':
+      applyState(m.data);
+      break;
+
+    case 'peer:new':
+      // 有人进来 → 我主动发起 offer（谁是老成员谁发起，避免重复）
+      setTimeout(() => createOffer(m.data.clientId), 260);
+      break;
+
+    case 'rtc:offer':
+      handleOffer(m.from, m.data);
+      break;
+    case 'rtc:answer':
+      handleAnswer(m.from, m.data);
+      break;
+    case 'rtc:ice':
+      handleIce(m.from, m.data);
+      break;
+    case 'rtc:bye':
+      closePeer(m.from);
+      break;
+    case 'peer:bye':
+      closePeer(m.data.clientId);
+      break;
+
+    case 'chat':
+      appendChat(m.data);
+      break;
+
+    case 'gift':
+      showGiftFly(m.data);
+      break;
+
+    case 'coins:update':
+      if (ME) { ME.coins = m.data.coins; ME.charm = m.data.charm; VR.LS.set('user', ME); updateCoinUI(); }
+      break;
+
+    case 'error':
+      VR.toast(m.msg || '操作失败', 'err');
+      break;
+    case 'join:fail':
+      VR.toast(m.msg || '进入失败', 'err');
+      setTimeout(() => location.href = '/', 1200);
+      break;
+    case 'room:closed':
+      // 房主解散了房间
+      VR.toast(m.data?.reason || '房间已被解散', 'err');
+      if (localStream) localStream.getTracks().forEach(t => t.stop());
+      peers.forEach((pc, id) => { try { pc.close(); } catch {} });
+      peers.clear();
+      setTimeout(() => location.href = '/', 1400);
+      break;
+    case 'room:destroyed':
+      VR.toast('房间已解散', 'ok');
+      setTimeout(() => location.href = '/', 900);
+      break;
+    case 'room:kicked':
+      // 同账号在别处登录，本会话被顶下线
+      VR.toast(m.data?.reason || '账号在其他地方登录', 'err');
+      if (localStream) localStream.getTracks().forEach(t => t.stop());
+      setTimeout(() => location.href = '/', 1200);
+      break;
+  }
+}
+
+/* ================= 渲染房间状态 ================= */
+function applyState(s) {
+  const prev = STATE;
+  STATE = s;
+
+  // 背景（支持动态主题与自定义图片）
+  VR.applyBackground(s.room.background);
+
+  document.getElementById('roomNo').textContent = s.room.no;
+  document.getElementById('roomName').textContent = s.room.name;
+  document.getElementById('roomCount').textContent = s.members.length;
+  document.getElementById('giftCoins').textContent = VR.shortNum(ME ? ME.coins : 0);
+  document.title = s.room.name + ' · 语音房';
+
+  // 歌单（首次填充 + 同步）
+  if (!prev || prev.giftList !== s.giftList) { giftList = s.giftList; }
+  renderSeats(s);
+  syncMusic(s);
+  if (document.getElementById('sheetMembers').classList.contains('show')) renderMembers(s);
+
+  // 房间设置面板同步（非编辑中才覆盖）
+  if (!roomSettingsDirty) {
+    document.getElementById('setRoomNo').textContent = s.room.no;
+    document.getElementById('setRoomName').value = s.room.name;
+    const isCustomBg = s.room.background && s.room.background.startsWith('/');
+    document.querySelectorAll('#setBgPicker .bg-opt').forEach(el =>
+      el.classList.toggle('sel', !isCustomBg && el.dataset.id === s.room.background));
+    updateCustomBgPreview(s.room.background);
+  }
+  // 我是不是房主
+  const me = s.members.find(x => x.clientId === clientId);
+  const isHost = me && s.hostClientId === clientId;
+  document.getElementById('setRoomName').disabled = !isHost;
+  document.getElementById('btnDestroyRoom').style.display = isHost ? '' : 'none';
+  document.querySelectorAll('#setBgPicker .bg-opt').forEach(el =>
+    el.style.pointerEvents = isHost ? '' : 'none');
+
+  // 麦克风按钮状态
+  if (me) {
+    const btn = document.getElementById('btnMic');
+    btn.className = 'icon-btn' + (me.muted ? ' off' : (me.seat >= 0 ? ' on' : ' off'));
+    btn.textContent = me.muted ? '🔇' : '🎤';
+  }
+
+  // 首次进入拉取聊天历史
+  if (!prev && s.chatLog) {
+    const list = document.getElementById('chatList');
+    list.innerHTML = '';
+    s.chatLog.forEach(appendChat);
+  }
+
+  // 修复：进入后如果有人已在房间，我需要主动建立连接
+  if (!prev) {
+    s.members.forEach(mem => {
+      if (mem.clientId !== clientId) setTimeout(() => createOffer(mem.clientId), 700);
+    });
+  }
+}
+
+/* ---------- 麦位（0 号 = 房主主位在顶部，1-8 号 = 2x4 宾客网格，圆形样式） ---------- */
+function renderSeats(s) {
+  const grid = document.getElementById('seatGrid');
+  const hostRow = document.getElementById('hostRow');
+  const bySeat = {};
+  s.members.forEach(m => { if (m.seat >= 0) bySeat[m.seat] = m; });
+
+  /* 房主主位：全透明圆形，皇冠 + "房"名条 */
+  const host = s.members.find(m => m.clientId === s.hostClientId);
+  if (host) {
+    const speaking = speakingSet.has(host.clientId) && !host.muted;
+    hostRow.innerHTML = `
+      <div class="host-seat ${speaking ? 'speaking' : ''}"
+           onclick="openCard('${host.clientId}')">
+        <div class="host-crown ${host.muted ? 'muted-crown' : ''}">👑</div>
+        <div class="mic-state ${host.muted ? 'muted' : ''}">${host.muted ? '🔇' : '🎤'}</div>
+        ${VR.avatarHtml(host.user, 74)}
+        <div class="host-name">
+          <span class="host-fang">房</span>
+          <span class="hn-text">${VR.esc(host.user.name)}</span>
+          ${host.user.vip ? '<span class="host-vip">👑</span>' : ''}
+        </div>
+      </div>`;
+  } else {
+    hostRow.innerHTML = `
+      <div class="host-empty">
+        <div class="hc">👑</div>
+        <div class="ht">房主位</div>
+      </div>`;
+  }
+
+  /* 宾客麦位 1-8（2 行 x 4 列，半透明圆 + 号） */
+  let html = '';
+  for (let i = 1; i <= 8; i++) {
+    const m = bySeat[i];
+    if (m) {
+      const isMe = m.clientId === clientId;
+      const speaking = speakingSet.has(m.clientId) && !m.muted;
+      html += `<div class="seat ${isMe ? 'mine' : ''} ${speaking ? 'speaking' : ''}"
+                    onclick="openCard('${m.clientId}')">
+        <div class="mic-state ${m.muted ? 'muted' : ''}">${m.muted ? '🔇' : '🎤'}</div>
+        ${VR.avatarHtml(m.user, 54)}
+        <div class="sname">${VR.esc(m.user.name)}${m.user.vip ? ' <span class="badge">V</span>' : ''}</div>
+      </div>`;
+    } else {
+      html += `<div class="seat empty" onclick="takeSeat(${i})">
+        <div class="seat-empty-circle">＋</div>
+        <div class="seat-hint">${i} 号麦</div>
+      </div>`;
+    }
+  }
+  grid.innerHTML = html;
+}
+
+function takeSeat(i) {
+  const me = STATE && STATE.members.find(m => m.clientId === clientId);
+  if (me && me.seat === i) { openSheet('sheetMembers'); return; }
+  send({ type: 'seat:change', seat: i });
+  VR.haptic();
+  if (STATE && STATE.members.some(m => m.seat === i && m.clientId !== clientId)) {
+    VR.toast('该麦位有人啦', 'err');
+  } else {
+    VR.toast('已上 ' + i + ' 号麦');
+  }
+}
+
+/* ---------- 成员列表 ---------- */
+function renderMembers(s) {
+  document.getElementById('memberCount').textContent = s.members.length + ' 人在房';
+  const box = document.getElementById('memberList');
+  box.innerHTML = s.members.map(m => {
+    const isHost = m.clientId === s.hostClientId;
+    return `<div class="member-item" onclick="openCard('${m.clientId}')">
+      ${VR.avatarHtml(m.user, 40)}
+      <div class="member-meta">
+        <div class="mn">${VR.esc(m.user.name)}
+          ${m.user.vip ? '<span class="badge">👑 VIP</span>' : ''}
+          ${isHost ? '<span class="badge badge-blue">房主</span>' : ''}
+        </div>
+        <div class="ms">${VR.genderIcon(m.user.gender)} · ${m.seat >= 0 ? (m.seat === 0 ? '房主主位' : m.seat + ' 号麦') : '听众'} · 💖 ${VR.shortNum(m.user.charm)}</div>
+      </div>
+      <div style="font-size:15px;color:var(--text-mute)">${m.muted ? '🔇' : '🎤'}</div>
+    </div>`;
+  }).join('');
+}
+
+/* ---------- 名片 ---------- */
+function openCard(cid) {
+  const m = STATE && STATE.members.find(x => x.clientId === cid);
+  if (!m) return;
+  selTargetClientId = cid;
+  const u = m.user;
+  const isHost = cid === STATE.hostClientId;
+  document.getElementById('cardBody').innerHTML = `
+    <div style="text-align:center">
+      <div style="display:flex;justify-content:center">${VR.avatarHtml(u, 88)}</div>
+      <div style="font-size:19px;font-weight:800;margin-top:12px;display:flex;align-items:center;justify-content:center;gap:6px">
+        ${VR.esc(u.name)}
+        ${u.vip ? '<span class="badge">👑 VIP' + (u.vipLevel || 1) + '</span>' : ''}
+      </div>
+      <div style="font-size:12.5px;color:var(--text-dim);margin-top:7px">
+        ${VR.genderIcon(u.gender)} ${(VR.GENDER[u.gender] || {}).label || '保密'}
+        ${isHost ? ' · 房主' : ''} · ${m.seat >= 0 ? (m.seat === 0 ? '房主主位' : m.seat + ' 号麦') : '听众'}
+      </div>
+      ${u.bio ? `<div style="font-size:13px;color:var(--text-dim);margin-top:11px;line-height:1.6;background:rgba(255,255,255,.06);padding:10px;border-radius:12px">${VR.esc(u.bio)}</div>` : ''}
+      <div class="stat-row" style="margin-top:16px">
+        <div class="stat"><div class="sv">${VR.shortNum(u.coins)}</div><div class="sl">💰 金币</div></div>
+        <div class="stat"><div class="sv charm">${VR.shortNum(u.charm)}</div><div class="sl">💖 魅力值</div></div>
+      </div>
+      <div class="row" style="margin-top:17px">
+        <button class="btn" onclick="VR.closeModal('modalCard');openSheet('sheetGift')">🎁 送礼物</button>
+        ${cid === clientId ? '<button class="btn btn-primary" onclick="VR.closeModal(\'modalCard\');openRoomEdit()">✏️ 编辑名片</button>' : ''}
+      </div>
+    </div>`;
+  VR.openModal('modalCard');
+}
+
+/* ---------- 我的资料（房间内） ---------- */
+function openRoomEdit() {
+  editAvatarData = ME.avatar || '';
+  editGenderSel = ME.gender || 'secret';
+  document.getElementById('roomEditName').value = ME.name || '';
+  document.getElementById('roomEditBio').value = ME.bio || '';
+  document.getElementById('roomEditGender').querySelectorAll('button').forEach(b =>
+    b.classList.toggle('active', b.dataset.g === editGenderSel));
+  renderRoomEditAvatar();
+  VR.openModal('modalEdit');
+}
+function renderRoomEditAvatar() {
+  document.getElementById('roomEditAvatar').innerHTML =
+    VR.avatarHtml({ id: USER_ID, name: document.getElementById('roomEditName').value || ME.name, avatar: editAvatarData }, 74);
+}
+function roomRandomAvatar() {
+  const n = document.getElementById('roomEditName').value || ME.name;
+  editAvatarData = VR.genAvatar(n, Math.floor(Math.random() * 12));
+  renderRoomEditAvatar(); VR.haptic();
+}
+async function onRoomAvatarFile(e) {
+  const f = e.target.files && e.target.files[0];
+  if (!f) return;
+  if (f.size > 8 * 1024 * 1024) return VR.toast('图片太大了（限 8MB）', 'err');
+  try { editAvatarData = await VR.fileToCompressedDataURL(f, 256, 0.82); renderRoomEditAvatar(); }
+  catch { VR.toast('图片处理失败', 'err'); }
+  e.target.value = '';
+}
+document.getElementById('roomEditName').addEventListener('input', renderRoomEditAvatar);
+
+function saveRoomProfile() {
+  const name = document.getElementById('roomEditName').value.trim();
+  if (!name) return VR.toast('昵称不能为空', 'err');
+  send({ type: 'profile:update', userId: USER_ID, patch: {
+    name, gender: editGenderSel, avatar: editAvatarData || '',
+    bio: document.getElementById('roomEditBio').value.trim() } });
+  VR.closeModal('modalEdit');
+  VR.toast('名片已更新', 'ok');
+}
+document.getElementById('roomEditGender').querySelectorAll('button').forEach(b => {
+  b.addEventListener('click', () => {
+    editGenderSel = b.dataset.g;
+    document.getElementById('roomEditGender').querySelectorAll('button').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+  });
+});
+
+/* ================= 公屏 ================= */
+function appendChat(m) {
+  const list = document.getElementById('chatList');
+  const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 90;
+  const el = document.createElement('div');
+
+  if (m.sys) {
+    el.className = 'msg msg-sys';
+    el.innerHTML = `<div class="sys-text">${VR.esc(m.text)}</div>`;
+  } else {
+    const mine = m.userId === USER_ID;
+    el.className = 'msg' + (mine ? ' mine' : '');
+    el.innerHTML = `
+      ${VR.avatarHtml({ id: m.userId, name: m.name, avatar: m.avatar }, 26)}
+      <div class="msg-main">
+        <div class="msg-head">
+          <span class="msg-name">${VR.esc(m.name)}</span>
+          ${m.vip ? '<span class="badge" style="font-size:9px">VIP</span>' : ''}
+          <span style="font-size:10px;color:var(--text-mute)">${VR.hhmm(m.at)}</span>
+        </div>
+        <div class="msg-bubble">${VR.esc(m.text)}</div>
+      </div>`;
+  }
+  list.appendChild(el);
+  while (list.children.length > 160) list.firstChild.remove();
+  if (atBottom || m.userId === USER_ID) list.scrollTop = list.scrollHeight;
+}
+
+function sendChat() {
+  const inp = document.getElementById('chatInput');
+  const t = inp.value.trim();
+  if (!t) return;
+  send({ type: 'chat', userId: USER_ID, text: t });
+  inp.value = '';
+  VR.haptic();
+}
+
+/* ================= 礼物 ================= */
+function openSheet(id) {
+  if (id === 'sheetGift') renderGiftPanel();
+  if (id === 'sheetMembers') renderMembers(STATE);
+  if (id === 'sheetRoomSettings') { roomSettingsDirty = false; }
+  VR.openSheet(id);
+}
+
+function renderGiftPanel() {
+  document.getElementById('giftCoins').textContent = VR.shortNum(ME.coins);
+  // 送礼对象
+  const others = STATE.members.filter(m => m.clientId !== clientId);
+  const targets = STATE.members;
+  if (!selTargetClientId || !targets.some(t => t.clientId === selTargetClientId)) {
+    selTargetClientId = (others[0] || targets[0] || {}).clientId || null;
+  }
+  document.getElementById('giftTargets').innerHTML = targets.map(m => `
+    <div style="text-align:center;flex:none;width:58px;cursor:pointer;opacity:${m.clientId === selTargetClientId ? 1 : .5}"
+         onclick="pickTarget('${m.clientId}')">
+      ${VR.avatarHtml(m.user, 44, m.clientId === selTargetClientId ? 'box-shadow:0 0 0 2px var(--brand)' : '')}
+      <div style="font-size:10.5px;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+        ${VR.esc(m.user.name)}${m.clientId === clientId ? '(我)' : ''}
+      </div>
+    </div>`).join('');
+
+  // 礼物列表
+  if (!selGiftId && giftList.length) selGiftId = giftList[0].id;
+  document.getElementById('giftGrid').innerHTML = giftList.map(g => `
+    <div class="gift-item ${g.id === selGiftId ? 'sel' : ''}" onclick="pickGift('${g.id}')">
+      <div class="ge">${g.emoji}</div>
+      <div class="gn">${VR.esc(g.name)}</div>
+      <div class="gp">💰${g.price}</div>
+    </div>`).join('');
+  updateGiftCost();
+}
+function pickTarget(cid) { selTargetClientId = cid; renderGiftPanel(); VR.haptic(); }
+function pickGift(id) { selGiftId = id; selGiftCount = 1; renderGiftPanel(); VR.haptic(); }
+function setCount(d) { selGiftCount = Math.max(1, Math.min(99, selGiftCount + d)); updateGiftCost(); VR.haptic(); }
+function updateGiftCost() {
+  const g = giftList.find(x => x.id === selGiftId);
+  document.getElementById('giftCount').textContent = selGiftCount;
+  document.getElementById('giftCost').textContent = g ? g.price * selGiftCount : 0;
+}
+function sendGift() {
+  const g = giftList.find(x => x.id === selGiftId);
+  if (!g) return VR.toast('请选择礼物', 'err');
+  if (!selTargetClientId) return VR.toast('请选择送礼对象', 'err');
+  if (ME.coins < g.price * selGiftCount) return VR.toast('金币不足', 'err');
+  send({ type: 'gift:send', userId: USER_ID, giftId: selGiftId, count: selGiftCount, toClientId: selTargetClientId });
+  VR.haptic(30);
+  VR.closeSheet();
+}
+
+function showGiftFly(ev) {
+  const target = STATE && STATE.members.find(m => m.clientId === ev.toClientId);
+  const toName = target ? target.user.name : '房间';
+  const el = document.createElement('div');
+  el.className = 'gift-fly';
+  el.innerHTML = `<div class="gfe">${ev.gift.emoji}</div>
+    <div class="gft">${VR.esc(ev.from.name)} 送出 ${VR.esc(ev.gift.name)} ×${ev.count}<br>
+    <span style="font-weight:600;opacity:.85">→ ${VR.esc(toName)}</span></div>`;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+  VR.haptic(18);
+
+  // 公屏也留一条
+  appendChat({ sys: true, text: `${ev.from.name} 送出 ${ev.gift.emoji}${ev.gift.name} ×${ev.count} 给 ${toName}` });
+}
+
+function updateCoinUI() {
+  document.getElementById('giftCoins').textContent = VR.shortNum(ME.coins);
+}
+
+/* ================= 房间设置 ================= */
+function renderSetBgPicker() {
+  document.getElementById('setBgPicker').innerHTML = VR.BACKGROUNDS.map(b =>
+    `<div class="bg-opt ${b.cls}" data-id="${b.id}" onclick="pickSetBg('${b.id}')">
+       <div class="bg-check">✓</div><div class="bg-label">${b.name}</div>
+     </div>`).join('');
+}
+function pickSetBg(id) {
+  roomSettingsDirty = true;
+  document.querySelectorAll('#setBgPicker .bg-opt').forEach(el => el.classList.toggle('sel', el.dataset.id === id));
+  VR.haptic();
+}
+function saveRoomSettings() {
+  const name = document.getElementById('setRoomName').value.trim();
+  const bg = (document.querySelector('#setBgPicker .bg-opt.sel') || {}).dataset?.id;
+  if (name) send({ type: 'room:rename', roomId, userId: USER_ID, name });
+  if (bg) send({ type: 'room:bg', roomId, userId: USER_ID, background: bg });
+  roomSettingsDirty = false;
+  VR.closeSheet();
+  VR.toast('房间设置已保存', 'ok');
+}
+document.getElementById('setRoomName').addEventListener('input', () => roomSettingsDirty = true);
+
+/* 自定义背景图 */
+function updateCustomBgPreview(bg) {
+  const el = document.getElementById('setCustomBgPreview');
+  if (bg && bg.startsWith('/')) {
+    el.innerHTML = `<img src="${VR.esc(bg)}" style="width:58px;height:36px;object-fit:cover;border-radius:8px;flex:none">
+      <span>已使用自定义背景图</span>`;
+  } else {
+    el.textContent = '未设置（当前使用主题背景）';
+  }
+}
+document.getElementById('setBgFile').addEventListener('change', async (e) => {
+  const f = e.target.files && e.target.files[0];
+  if (!f) return;
+  if (f.size > 12 * 1024 * 1024) return VR.toast('图片太大了（限 12MB）', 'err');
+  try {
+    VR.toast('正在上传背景…');
+    const dataUrl = await VR.fileToCompressedDataURL(f, 1280, 0.86);
+    const res = await fetch('/api/upload-bg', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: USER_ID, dataUrl })
+    });
+    const j = await res.json();
+    if (!j.ok) throw new Error(j.msg || '上传失败');
+    roomSettingsDirty = false;
+    VR.closeSheet();
+    VR.toast('背景已更新 ✨', 'ok');
+  } catch (err) {
+    VR.toast(err.message || '上传失败', 'err');
+  }
+  e.target.value = '';
+});
+
+/* 解散永久房间 */
+function destroyMyRoom() {
+  if (!confirm('确定解散房间吗？\n房间号会失效，解散后你可以重新创建新房间。')) return;
+  send({ type: 'room:destroy', userId: USER_ID, roomId });
+  VR.closeSheet();
+}
+
+/* ================= 听歌 ================= */
+const audio = document.getElementById('musicPlayer');
+audio.volume = 0.85;
+
+/* ---------- 搜索曲库 ---------- */
+let searchTimer = null;
+async function searchMusic() {
+  const q = (document.getElementById('songQuery').value || '').trim();
+  const box = document.getElementById('searchResult');
+  box.innerHTML = '<div class="empty-hint" style="padding:12px 0">搜索中…</div>';
+
+  try {
+    const res = await fetch('/api/music/search?q=' + encodeURIComponent(q));
+    const j = await res.json();
+    if (!j.ok) throw new Error();
+
+    if (!j.list.length) {
+      box.innerHTML = `<div class="empty-hint" style="padding:12px 0">
+        ${q ? '没有找到「' + VR.esc(q) + '」<br>试试其他关键词' : '曲库还是空的'}</div>`;
+      return;
+    }
+
+    box.innerHTML = `
+      <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">找到 ${j.total} 首</div>
+      ${j.list.map(m => `
+        <div class="song-item">
+          <div class="sicon">🎵</div>
+          <div class="song-meta">
+            <div class="st">${VR.esc(m.title)}</div>
+            <div class="sb">${VR.esc(m.artist || '未知')}</div>
+          </div>
+          <button class="btn btn-sm btn-primary" onclick="playFromLibrary('${m.id}')">点播</button>
+          <button class="btn btn-sm" onclick="addFromLibrary('${m.id}')">加入</button>
+        </div>`).join('')}`;
+  } catch {
+    box.innerHTML = '<div class="empty-hint" style="padding:12px 0">搜索失败，请检查网络</div>';
+  }
+}
+
+/** 立即点播（全房间同步切歌） */
+function playFromLibrary(libraryId) {
+  send({ type: 'music:play-now', libraryId, by: ME.name });
+  VR.toast('正在为全房间点播…', 'ok');
+  VR.haptic();
+}
+
+/** 加入歌单（不打断当前播放） */
+function addFromLibrary(libraryId) {
+  send({ type: 'music:add', libraryId, by: ME.name });
+  VR.toast('已加入歌单', 'ok');
+  VR.haptic();
+}
+
+// 输入时自动搜索（防抖）
+document.getElementById('songQuery').addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(searchMusic, 420);
+});
+
+/* ---------- 渲染当前播放 + 歌单 ---------- */
+function renderNowPlaying(s) {
+  const np = document.getElementById('nowPlaying');
+  if (s.currentSong) {
+    const playing = s.playing;
+    np.innerHTML = `
+      <div style="background:linear-gradient(135deg,rgba(123,107,255,.28),rgba(79,195,247,.18));border:1px solid var(--brand);border-radius:14px;padding:13px">
+        <div style="font-size:11px;color:var(--text-dim);margin-bottom:5px">${playing ? '正在播放' : '已暂停'}</div>
+        <div style="font-size:15px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🎵 ${VR.esc(s.currentSong.title)}</div>
+        <div style="font-size:11.5px;color:var(--text-dim);margin-top:3px">${VR.esc(s.currentSong.artist || s.currentSong.by || '')}</div>
+        <div style="display:flex;gap:8px;margin-top:11px">
+          <button class="btn btn-sm" onclick="musicCtl('${playing ? 'pause' : 'play'}')">${playing ? '⏸ 暂停' : '▶️ 播放'}</button>
+          <button class="btn btn-sm" onclick="musicCtl('next')">⏭ 下一首</button>
+        </div>
+      </div>`;
+  } else {
+    np.innerHTML = '<div class="empty-hint" style="padding:14px 0">还没有点播歌曲<br>搜索一下试试 🎵</div>';
+  }
+}
+
+function renderPlaylist(s) {
+  document.getElementById('playlist').innerHTML = s.playlist.length ? s.playlist.map((sg, i) => `
+    <div class="song-item ${s.currentSong && sg.id === s.currentSong.id ? 'playing' : ''}">
+      <div class="sicon">${s.currentSong && sg.id === s.currentSong.id ? '🔊' : '🎵'}</div>
+      <div class="song-meta">
+        <div class="st">${i + 1}. ${VR.esc(sg.title)}</div>
+        <div class="sb">${VR.esc(sg.artist || sg.by || '未知')}</div>
+      </div>
+      <button class="btn btn-sm" onclick="musicCtl('select','${sg.id}')">播放</button>
+      <button class="btn btn-sm" style="padding:8px 10px" onclick="musicCtl('remove','${sg.id}')">✕</button>
+    </div>`).join('') : '<div class="empty-hint" style="padding:14px 0">歌单是空的，搜索歌曲点播吧</div>';
+}
+
+function syncMusic(s) {
+  renderNowPlaying(s);
+  renderPlaylist(s);
+
+  // 悬浮音乐按钮状态
+  const fab = document.getElementById('fabMusic');
+  const fabNote = document.getElementById('fabNote');
+  const fabTitle = document.getElementById('fabTitle');
+  if (s.currentSong && s.playing) {
+    fab.classList.add('playing');
+    fabNote.textContent = '💿';
+    fabNote.classList.add('spinning');
+    fabTitle.style.display = '';
+    fabTitle.textContent = s.currentSong.title;
+  } else {
+    fab.classList.remove('playing');
+    fabNote.textContent = '🎵';
+    fabNote.classList.remove('spinning');
+    if (s.currentSong) { fabTitle.style.display = ''; fabTitle.textContent = '⏸ ' + s.currentSong.title; }
+    else fabTitle.style.display = 'none';
+  }
+
+  // 同步播放器
+  if (s.currentSong) {
+    if (audio.dataset.songId !== s.currentSong.id) {
+      audio.dataset.songId = s.currentSong.id;
+      audio.src = s.currentSong.url;
+      audio.load();
+    }
+    if (s.playing) {
+      // 计算进度，实现多人同步
+      const elapsed = s.startedAt ? (s.now - s.startedAt) / 1000 : 0;
+      if (Math.abs((audio.currentTime || 0) - elapsed) > 3) {
+        try { audio.currentTime = Math.max(0, elapsed); } catch {}
+      }
+      if (audio.paused && speakerOn) audio.play().catch(() => {});
+    } else {
+      if (!audio.paused) audio.pause();
+    }
+  } else {
+    audio.pause();
+    audio.removeAttribute('src');
+    audio.dataset.songId = '';
+  }
+}
+
+function musicCtl(action, songId) {
+  send({ type: 'music:control', action, songId });
+  VR.haptic();
+}
+
+// 播放器错误提示
+audio.addEventListener('error', () => {
+  if (audio.dataset.songId) VR.toast('这首歌加载失败，可能是链接不支持跨域', 'err');
+});
+
+/* ================= 语音（WebRTC） ================= */
+async function ensureLocalStream() {
+  if (localStream) return localStream;
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      video: false
+    });
+    return localStream;
+  } catch (e) {
+    VR.toast('无法访问麦克风：' + (e.name === 'NotAllowedError' ? '你拒绝了授权' : e.message), 'err');
+    return null;
+  }
+}
+
+async function toggleMic() {
+  // iOS 必须由用户手势触发 getUserMedia，这里就是那个手势
+  if (!localStream) {
+    const s = await ensureLocalStream();
+    if (!s) return;
+    micOn = true;
+    VR.toast('麦克风已开启 🎤', 'ok');
+    // 通知房间
+    send({ type: 'mic:toggle', muted: false });
+    if (STATE) STATE.members.forEach(m => { if (m.clientId !== clientId) createOffer(m.clientId); });
+    startSpeakingDetect();
+    updateMicBtn();
+    return;
+  }
+  micOn = !micOn;
+  localStream.getAudioTracks().forEach(t => t.enabled = micOn);
+  send({ type: 'mic:toggle', muted: !micOn });
+  updateMicBtn();
+  VR.toast(micOn ? '麦克风已开' : '麦克风已关（闭麦）');
+  VR.haptic();
+}
+function updateMicBtn() {
+  const btn = document.getElementById('btnMic');
+  const me = STATE && STATE.members.find(m => m.clientId === clientId);
+  const muted = me ? me.muted : !micOn;
+  btn.className = 'icon-btn' + (muted ? ' off' : ' on');
+  btn.textContent = muted ? '🔇' : '🎤';
+}
+
+function toggleSpeaker() {
+  speakerOn = !speakerOn;
+  const btn = document.getElementById('btnHeadset');
+  btn.className = 'icon-btn' + (speakerOn ? ' on' : ' off');
+  btn.textContent = speakerOn ? '🔊' : '🔈';
+  // 所有远端音频
+  document.querySelectorAll('audio.remote-audio').forEach(a => a.muted = !speakerOn);
+  audio.muted = !speakerOn;
+  VR.toast(speakerOn ? '扬声器已开' : '扬声器已关');
+  VR.haptic();
+}
+
+function rtcConfig() { return { iceServers: RTC_CONFIG.iceServers }; }
+
+async function createOffer(remoteId) {
+  if (peers.has(remoteId)) return;
+  const pc = new RTCPeerConnection(rtcConfig());
+  peers.set(remoteId, pc);
+  setupPeer(pc, remoteId);
+  if (localStream) localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+  else { try { pc.addTransceiver('audio', { direction: 'sendrecv' }); } catch {} }
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  send({ type: 'rtc:offer', to: remoteId, data: pc.localDescription });
+}
+
+async function handleOffer(fromId, desc) {
+  let pc = peers.get(fromId);
+  if (!pc) {
+    pc = new RTCPeerConnection(rtcConfig());
+    peers.set(fromId, pc);
+    setupPeer(pc, fromId);
+    if (localStream) localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+    else { try { pc.addTransceiver('audio', { direction: 'sendrecv' }); } catch {} }
+  }
+  await pc.setRemoteDescription(new RTCSessionDescription(desc));
+  const answer = await pc.createAnswer();
+  await pc.setLocalDescription(answer);
+  send({ type: 'rtc:answer', to: fromId, data: pc.localDescription });
+}
+
+async function handleAnswer(fromId, desc) {
+  const pc = peers.get(fromId);
+  if (pc) { try { await pc.setRemoteDescription(new RTCSessionDescription(desc)); } catch {} }
+}
+
+async function handleIce(fromId, cand) {
+  const pc = peers.get(fromId);
+  if (pc && cand) { try { await pc.addIceCandidate(new RTCIceCandidate(cand)); } catch {} }
+}
+
+function setupPeer(pc, remoteId) {
+  pc.onicecandidate = (e) => { if (e.candidate) send({ type: 'rtc:ice', to: remoteId, data: e.candidate }); };
+  pc.ontrack = (e) => {
+    let a = document.getElementById('audio-' + remoteId);
+    if (!a) {
+      a = document.createElement('audio');
+      a.id = 'audio-' + remoteId;
+      a.className = 'remote-audio';
+      a.autoplay = true; a.playsInline = true;
+      a.muted = false;
+      document.body.appendChild(a);
+    }
+    a.srcObject = e.streams[0];
+    a.muted = !speakerOn;
+    a.play().catch(() => {});
+    attachAnalyser(remoteId, e.streams[0]);
+    // 有人说话就上麦提示
+  };
+  pc.onconnectionstatechange = () => {
+    if (['failed', 'closed', 'disconnected'].includes(pc.connectionState)) closePeer(remoteId);
+  };
+}
+
+function closePeer(remoteId) {
+  const pc = peers.get(remoteId);
+  if (pc) { try { pc.close(); } catch {} peers.delete(remoteId); }
+  const a = document.getElementById('audio-' + remoteId);
+  if (a) { a.srcObject = null; a.remove(); }
+  analyserMap.delete(remoteId);
+  speakingSet.delete(remoteId);
+  if (STATE) renderSeats(STATE);
+}
+
+/* ---------- 说话检测（绿圈） ---------- */
+const speakingSet = new Set();
+function attachAnalyser(id, stream) {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const src = audioCtx.createMediaStreamSource(stream);
+    const an = audioCtx.createAnalyser();
+    an.fftSize = 512;
+    src.connect(an);
+    analyserMap.set(id, an);
+  } catch {}
+}
+function startSpeakingDetect() {
+  if (speakingTimer) return;
+  speakingTimer = setInterval(() => {
+    let changed = false;
+    // 自己的音量
+    if (localStream && micOn) {
+      if (!analyserMap.has('self')) attachAnalyser('self', localStream);
+      const a = analyserMap.get('self');
+      if (a) {
+        const d = new Uint8Array(a.frequencyBinCount);
+        a.getByteFrequencyData(d);
+        const avg = d.reduce((s, v) => s + v, 0) / d.length;
+        const was = speakingSet.has(clientId);
+        if (avg > 22 && !was) { speakingSet.add(clientId); changed = true; }
+        else if (avg <= 14 && was) { speakingSet.delete(clientId); changed = true; }
+      }
+    }
+    for (const [id, a] of analyserMap) {
+      if (id === 'self') continue;
+      const d = new Uint8Array(a.frequencyBinCount);
+      a.getByteFrequencyData(d);
+      const avg = d.reduce((s, v) => s + v, 0) / d.length;
+      const was = speakingSet.has(id);
+      if (avg > 22 && !was) { speakingSet.add(id); changed = true; }
+      else if (avg <= 14 && was) { speakingSet.delete(id); changed = true; }
+    }
+    if (changed && STATE) renderSeats(STATE);
+  }, 320);
+}
+
+/* ================= 离开 ================= */
+function leaveRoom() {
+  if (localStream) localStream.getTracks().forEach(t => t.stop());
+  peers.forEach((pc, id) => { try { pc.close(); } catch {} });
+  peers.clear();
+  send({ type: 'room:leave' });
+  if (window.WS) window.WS.close();
+  location.href = '/';
+}
+
+// 页面关闭时清理
+window.addEventListener('beforeunload', () => {
+  if (localStream) localStream.getTracks().forEach(t => t.stop());
+});
+
+// 切回前台恢复音频（iOS 会暂停）
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && STATE && STATE.playing && speakerOn && audio.paused) {
+    audio.play().catch(() => {});
+  }
+});
+</script>
+</body>
+</html>

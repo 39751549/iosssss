@@ -1,0 +1,24 @@
+node_modules/
+data/
+data-test/
+shots/
+.chrome-tmp/
+*.log
+.DS_Store
+
+# 测试与截图脚本（部署不需要）
+test.js
+test-music.js
+shot.js
+shot-music.js
+
+# 部署工具（内含服务器凭据，严禁上传！）
+tencent.py
+
+# 已废弃的套壳方案
+ios-app/
+
+# iOS 云构建缓存与参考截图
+ios-native/.spm-cache/
+ios-native/*.jpg
+*.ipa

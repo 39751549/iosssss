@@ -1,0 +1,118 @@
+# ============================================================
+#  GitHub Actions 云打包：编译未签名 .ipa
+# ============================================================
+#
+#  为什么是「未签名」：
+#    你有 365 天永久签名渠道，签名的最后一步（用你的证书重签）在你的签名工具里做。
+#    云端只负责把 Swift 代码编译成可运行产物，不需要你的证书，
+#    所以这里关掉签名，产出「未签名 .ipa」，你拿回来用自己的方式签一下就能装。
+#
+#  用法：
+#    1. 把仓库推到 GitHub（本 workflow 已包含在内）
+#    2. 每次 push 到 main/master（改动 ios-native/**）或手动触发，自动构建
+#    3. 构建成功后自动上传 .ipa 到 Releases，tag 固定为 ipa-latest
+#       下载地址：仓库 Releases → ipa-latest → VoiceRoom-unsigned.ipa
+#       或直链：https://github.com/<user>/<repo>/releases/download/ipa-latest/VoiceRoom-unsigned.ipa
+#
+#  免费额度：公开仓库无限；私有仓库每月 2000 分钟（本项目一趟约 8-12 分钟）。
+# ============================================================
+
+name: Build unsigned IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    paths:
+      - 'ios-native/**'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build iOS app
+    runs-on: macos-14
+    timeout-minutes: 40
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 显示环境信息
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: 解析 Swift Package 依赖（拉取 WebRTC）
+        working-directory: ios-native
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project VoiceRoom.xcodeproj \
+            -scheme VoiceRoom \
+            -clonedSourcePackagesDirPath .spm-cache
+
+      - name: 编译（未签名 Archive）
+        working-directory: ios-native
+        run: |
+          set -o pipefail
+          xcodebuild clean archive \
+            -project VoiceRoom.xcodeproj \
+            -scheme VoiceRoom \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/VoiceRoom.xcarchive" \
+            -clonedSourcePackagesDirPath .spm-cache \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_ENTITLEMENTS="" \
+            DEVELOPMENT_TEAM="" \
+            | xcpretty || xcodebuild clean archive \
+                -project VoiceRoom.xcodeproj \
+                -scheme VoiceRoom \
+                -configuration Release \
+                -destination 'generic/platform=iOS' \
+                -archivePath "$RUNNER_TEMP/VoiceRoom.xcarchive" \
+                -clonedSourcePackagesDirPath .spm-cache \
+                CODE_SIGN_IDENTITY="" \
+                CODE_SIGNING_REQUIRED=NO \
+                CODE_SIGNING_ALLOWED=NO \
+                DEVELOPMENT_TEAM=""
+
+      - name: 打包成未签名 .ipa
+        run: |
+          set -e
+          APP_PATH="$RUNNER_TEMP/VoiceRoom.xcarchive/Products/Applications/VoiceRoom.app"
+          test -d "$APP_PATH" || { echo "❌ 找不到 VoiceRoom.app"; ls -R "$RUNNER_TEMP/VoiceRoom.xcarchive/Products"; exit 1; }
+
+          mkdir -p "$RUNNER_TEMP/Payload"
+          cp -R "$APP_PATH" "$RUNNER_TEMP/Payload/"
+
+          cd "$RUNNER_TEMP"
+          zip -qry VoiceRoom-unsigned.ipa Payload
+
+          echo "✅ 打包完成"
+          ls -lh VoiceRoom-unsigned.ipa
+          echo "IPA_PATH=$RUNNER_TEMP/VoiceRoom-unsigned.ipa" >> $GITHUB_ENV
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: VoiceRoom-unsigned-ipa
+          path: ${{ env.IPA_PATH }}
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: 发布 IPA 到 Releases（tag: ipa-latest）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 删除旧的 ipa-latest release + tag（每次覆盖为最新构建）
+          gh release delete ipa-latest --yes --cleanup-tag || true
+          gh release create ipa-latest "$IPA_PATH" \
+            --title "VoiceRoom 未签名 IPA（最新构建）" \
+            --notes "自动构建于 $(date -u '+%Y-%m-%d %H:%M UTC')，commit: ${GITHUB_SHA::7}
+
+          下载 VoiceRoom-unsigned.ipa 后，用你自己的证书重签即可安装。" \
+            --latest

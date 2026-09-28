@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>语音房 · 管理后台</title>
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  body { overflow: auto; background: #0B1020; }
+  .admin-wrap { max-width: 1100px; margin: 0 auto; padding: 22px 18px calc(30px + var(--safe-bottom)); position: relative; z-index: 1; }
+  .admin-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+  .admin-head h1 { font-size: 21px; margin: 0; }
+  .admin-head .spacer { flex: 1; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 11px; margin-bottom: 20px; }
+  .stat-card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 15px;
+    backdrop-filter: blur(16px);
+  }
+  .stat-card .v { font-size: 23px; font-weight: 800; background: linear-gradient(135deg,#7B6BFF,#4FC3F7); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+  .stat-card .l { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 18px; padding: 17px; margin-bottom: 16px; backdrop-filter: blur(16px); }
+  .panel h2 { font-size: 15.5px; margin: 0 0 14px; display: flex; align-items: center; gap: 7px; }
+  .panel h2 .sub { font-size: 12px; color: var(--text-mute); font-weight: 500; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 10px 9px; border-bottom: 1px solid rgba(255,255,255,.07); }
+  th { font-size: 12px; color: var(--text-dim); font-weight: 600; white-space: nowrap; }
+  tr:hover td { background: rgba(255,255,255,.03); }
+  .u-cell { display: flex; align-items: center; gap: 9px; min-width: 150px; }
+  .u-cell .avatar { width: 32px; height: 32px; font-size: 12px; }
+  .tag { display: inline-block; font-size: 10.5px; padding: 2px 7px; border-radius: 6px; background: rgba(123,107,255,.24); color: #B9AEFF; font-weight: 700; }
+  .tag.gold { background: rgba(255,201,60,.2); color: var(--gold); }
+  .tag.green { background: rgba(56,211,159,.18); color: var(--green); }
+  .tag.gray { background: rgba(255,255,255,.08); color: var(--text-mute); }
+  .tbl-wrap { overflow-x: auto; }
+  .mini-input { width: 88px; padding: 6px 9px; border-radius: 9px; background: rgba(255,255,255,.09); border: 1px solid var(--border); color: var(--text); font-size: 13px; }
+  .login-screen { display: flex; align-items: center; justify-content: center; min-height: 100dvh; padding: 20px; }
+  .login-box { width: 100%; max-width: 330px; background: var(--panel); border: 1px solid var(--border); border-radius: 22px; padding: 26px; backdrop-filter: blur(20px); }
+  .flex { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .hint { font-size: 12px; color: var(--text-mute); line-height: 1.6; }
+  .mono { font-family: ui-monospace, SFMono-Regular, monospace; }
+  .upload-zone {
+    border: 2px dashed rgba(255,255,255,.22); border-radius: 16px;
+    padding: 26px 18px; text-align: center; cursor: pointer;
+    transition: border-color .2s, background .2s; background: rgba(255,255,255,.03);
+  }
+  .upload-zone:hover, .upload-zone.dragover {
+    border-color: var(--brand); background: rgba(123,107,255,.1);
+  }
+  .upload-progress { margin-top: 14px; }
+  .progress-bar {
+    height: 6px; background: rgba(255,255,255,.1); border-radius: 4px;
+    overflow: hidden; margin-top: 8px;
+  }
+  .progress-fill {
+    height: 100%; width: 0%; border-radius: 4px;
+    background: linear-gradient(90deg, #7B6BFF, #4FC3F7);
+    transition: width .25s ease;
+  }
+</style>
+</head>
+<body class="bg-night">
+
+<!-- 登录 -->
+<div class="login-screen" id="loginScreen">
+  <div class="login-box">
+    <div style="text-align:center;margin-bottom:20px">
+      <div style="font-size:38px">🎛️</div>
+      <h1 style="font-size:19px;margin:10px 0 5px">管理后台</h1>
+      <p style="font-size:12.5px;color:var(--text-dim);margin:0">输入管理密码进入</p>
+    </div>
+    <input class="input" id="pwd" type="password" placeholder="管理密码" style="margin-bottom:12px"
+           onkeydown="if(event.key==='Enter')doLogin()">
+    <button class="btn btn-primary btn-block" onclick="doLogin()">进入后台</button>
+    <div class="hint" style="margin-top:14px;text-align:center">默认密码 <b class="mono">admin888</b>，登录后请立即修改</div>
+  </div>
+</div>
+
+<!-- 后台 -->
+<div class="admin-wrap" id="adminPanel" style="display:none">
+  <div class="admin-head">
+    <h1>🎛️ 管理后台</h1>
+    <div class="spacer"></div>
+    <button class="btn btn-sm" onclick="load()">↻ 刷新</button>
+    <button class="btn btn-sm" onclick="location.href='/'">🏠 回大厅</button>
+    <button class="btn btn-sm" onclick="logout()">退出</button>
+  </div>
+
+  <div class="stats" id="stats"></div>
+
+  <!-- 在线用户 -->
+  <div class="panel">
+    <h2>🟢 在线用户 <span class="sub" id="onlineSub"></span></h2>
+    <div class="tbl-wrap"><table><thead><tr>
+      <th>用户</th><th>所在房间</th><th>麦位</th><th>金币</th><th>魅力值</th><th>操作</th>
+    </tr></thead><tbody id="onlineBody"></tbody></table></div>
+  </div>
+
+  <!-- 房间管理 -->
+  <div class="panel">
+    <h2>🚪 房间管理 <span class="sub" id="roomSub"></span></h2>
+    <div class="tbl-wrap"><table><thead><tr>
+      <th>房间名</th><th>房间号</th><th>背景</th><th>在线</th><th>操作</th>
+    </tr></thead><tbody id="roomBody"></tbody></table></div>
+    <input type="file" id="adminBgFile" accept="image/png,image/jpeg,image/gif,image/webp" style="display:none">
+  </div>
+
+  <!-- 全部用户 -->
+  <div class="panel">
+    <h2>👥 全部用户 <span class="sub">可发放金币、设置 VIP、改资料</span></h2>
+    <div class="flex" style="margin-bottom:12px">
+      <input class="input" id="userSearch" placeholder="搜索昵称或 ID" style="max-width:230px" oninput="renderUsers()">
+      <button class="btn btn-sm btn-gold" onclick="giveAllCoins()">💰 全员 +1000 金币</button>
+    </div>
+    <div class="tbl-wrap"><table><thead><tr>
+      <th>用户</th><th>性别</th><th>金币</th><th>魅力值</th><th>VIP</th><th>操作</th>
+    </tr></thead><tbody id="userBody"></tbody></table></div>
+  </div>
+
+  <!-- 音乐曲库 -->
+  <div class="panel">
+    <h2>🎵 音乐曲库 <span class="sub" id="musicSub"></span></h2>
+
+    <div class="upload-zone" id="uploadZone">
+      <div style="font-size:30px;margin-bottom:8px">📁</div>
+      <div style="font-size:14px;font-weight:600;margin-bottom:4px">点击选择音频文件上传</div>
+      <div class="hint">支持 mp3 / m4a / wav / aac / ogg / flac，单个最大 30MB<br>可一次选多个文件批量上传</div>
+      <input type="file" id="musicFiles" accept="audio/*,.mp3,.m4a,.wav,.aac,.ogg,.flac" multiple style="display:none">
+    </div>
+
+    <div class="upload-progress" id="uploadProgress" style="display:none">
+      <div class="hint" id="uploadStatus"></div>
+      <div class="progress-bar"><div class="progress-fill" id="uploadFill"></div></div>
+    </div>
+
+    <div class="flex" style="margin:14px 0 12px">
+      <input class="input" id="musicSearch" placeholder="搜索曲库中的歌名或歌手" style="max-width:280px"
+             oninput="renderMusic()">
+      <button class="btn btn-sm" onclick="loadMusic()">↻ 刷新</button>
+      <button class="btn btn-sm" style="background:rgba(255,92,108,.2)" onclick="clearAllMusic()">清空曲库</button>
+    </div>
+
+    <div class="tbl-wrap"><table><thead><tr>
+      <th>歌曲</th><th>歌手</th><th>格式</th><th>大小</th><th>上传时间</th><th>操作</th>
+    </tr></thead><tbody id="musicBody"></tbody></table></div>
+  </div>
+
+  <!-- 系统设置 -->
+  <div class="panel">
+    <h2>⚙️ 系统设置</h2>
+    <div class="flex" style="margin-bottom:14px">
+      <div style="flex:1;min-width:250px">
+        <div class="hint" style="margin-bottom:7px">VIP 码（逗号分隔，用户输入即可激活）</div>
+        <input class="input" id="vipsInput" placeholder="888888,666666">
+      </div>
+      <button class="btn" onclick="saveVips()">保存 VIP 码</button>
+    </div>
+    <div class="flex">
+      <div style="flex:1;min-width:250px">
+        <div class="hint" style="margin-bottom:7px">修改管理密码</div>
+        <input class="input" id="newPwd" type="password" placeholder="新密码（至少 4 位）">
+      </div>
+      <button class="btn" onclick="savePwd()">修改密码</button>
+    </div>
+  </div>
+
+  <div class="hint" style="text-align:center;padding:12px 0">
+    数据保存在服务端 <span class="mono">data/store.json</span> · 定期备份该文件即可
+  </div>
+</div>
+
+<script src="/js/common.js"></script>
+<script>
+let PWD = sessionStorage.getItem('adminPwd') || '';
+let DATA = null;
+let MUSIC = [];
+
+(function init() {
+  initUpload();
+  document.getElementById('adminBgFile').addEventListener('change', onAdminBgFile);
+  if (PWD) { showPanel(); load(); }
+  else document.getElementById('pwd').focus();
+})();
+
+function doLogin() {
+  const p = document.getElementById('pwd').value;
+  if (!p) return VR.toast('请输入密码', 'err');
+  PWD = p;
+  sessionStorage.setItem('adminPwd', p);
+  showPanel();
+  load();
+}
+function showPanel() {
+  document.getElementById('loginScreen').style.display = 'none';
+  document.getElementById('adminPanel').style.display = '';
+}
+function logout() { sessionStorage.removeItem('adminPwd'); PWD = ''; location.reload(); }
+
+async function api(action, body) {
+  const res = await fetch('/api/admin/' + action, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(Object.assign({ password: PWD }, body || {}))
+  });
+  const json = await res.json().catch(() => ({ ok: false, msg: '解析失败' }));
+  if (!res.ok || !json.ok) {
+    if (res.status === 401) { VR.toast('密码错误', 'err'); sessionStorage.removeItem('adminPwd'); setTimeout(() => location.reload(), 900); }
+    else VR.toast(json.msg || '操作失败', 'err');
+    return null;
+  }
+  return json;
+}
+
+async function load() {
+  const r = await api('overview');
+  if (!r) return;
+  DATA = r.data;
+  renderStats(); renderOnline(); renderRooms(); renderUsers();
+  document.getElementById('vipsInput').value = (DATA.vips || []).join(',');
+  loadMusic();
+}
+
+function renderStats() {
+  const s = DATA.stats;
+  document.getElementById('stats').innerHTML = [
+    { v: s.onlineCount, l: '🟢 在线人数' },
+    { v: s.roomCount,   l: '🚪 房间数' },
+    { v: s.userCount,   l: '👥 注册用户' },
+    { v: s.vipCount,    l: '👑 VIP 用户' },
+    { v: VR.shortNum(s.totalCoins), l: '💰 金币总量' },
+    { v: VR.shortNum(s.totalCharm), l: '💖 魅力总值' }
+  ].map(x => `<div class="stat-card"><div class="v">${x.v}</div><div class="l">${x.l}</div></div>`).join('');
+}
+
+function renderOnline() {
+  const list = DATA.online || [];
+  document.getElementById('onlineSub').textContent = list.length ? list.length + ' 人在线' : '暂无人在线';
+  const box = document.getElementById('onlineBody');
+  if (!list.length) { box.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-mute);padding:22px">暂无在线用户</td></tr>'; return; }
+  box.innerHTML = list.map(u => `
+    <tr>
+      <td><div class="u-cell">${VR.avatarHtml(u, 32)}<div>
+        <div style="font-weight:600">${VR.esc(u.name)} ${u.vip ? '<span class="tag gold">VIP</span>' : ''}</div>
+        <div class="hint mono">${VR.esc(u.id)}</div>
+      </div></div></td>
+      <td>${VR.esc(u.roomName)} <span class="hint">(${u.roomNo})</span></td>
+      <td>${u.seat >= 0 ? '<span class="tag green">' + (u.seat + 1) + '号麦</span>' : '<span class="tag gray">听众</span>'}</td>
+      <td>💰 ${VR.shortNum(u.coins)}</td>
+      <td>💖 ${VR.shortNum(u.charm)}</td>
+      <td><div class="flex">
+        <input class="mini-input" type="number" value="1000" id="c_${u.id}">
+        <button class="btn btn-sm btn-gold" onclick="giveCoins('${u.id}')">发金币</button>
+      </div></td>
+    </tr>`).join('');
+}
+
+function renderRooms() {
+  const list = DATA.rooms || [];
+  document.getElementById('roomSub').textContent = list.length ? list.length + ' 个房间' : '暂无房间';
+  const box = document.getElementById('roomBody');
+  if (!list.length) { box.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-mute);padding:22px">暂无房间</td></tr>'; return; }
+  box.innerHTML = list.map(r => `
+    <tr>
+      <td><input class="mini-input" style="width:150px" value="${VR.esc(r.name)}" id="rn_${r.id}"></td>
+      <td class="mono" style="color:var(--gold);font-weight:700">${r.no}</td>
+      <td>${VR.bgIcon(r.background)} ${VR.esc((VR.BACKGROUNDS.find(b=>b.id===r.background)||{}).name || (String(r.background).startsWith('/') ? '🖼️ 自定义图' : r.background))}</td>
+      <td>${r.count ? '<span class="tag green">' + r.count + ' 人</span>' : '<span class="tag gray">空闲</span>'}</td>
+      <td><div class="flex">
+        <button class="btn btn-sm" onclick="renameRoom('${r.id}')">改名</button>
+        <button class="btn btn-sm" onclick="pickRoomBg('${r.id}')">🖼️ 背景</button>
+        <button class="btn btn-sm" style="background:rgba(255,92,108,.2)" onclick="delRoom('${r.id}','${VR.esc(r.name)}')">删除</button>
+      </div></td>
+    </tr>`).join('');
+}
+
+/* ---------- 房间背景上传 ---------- */
+let bgTargetRoom = null;
+function pickRoomBg(roomId) {
+  bgTargetRoom = roomId;
+  document.getElementById('adminBgFile').click();
+}
+async function onAdminBgFile(e) {
+  const f = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (!f || !bgTargetRoom) return;
+  if (f.size > 6 * 1024 * 1024) return VR.toast('图片太大了（限 6MB）', 'err');
+  VR.toast('正在上传背景…');
+  try {
+    const buf = await f.arrayBuffer();
+    const res = await fetch('/api/admin/upload-bg?password=' + encodeURIComponent(PWD) + '&roomId=' + encodeURIComponent(bgTargetRoom), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: buf
+    });
+    const j = await res.json().catch(() => ({ ok: false, msg: '解析失败' }));
+    if (!j.ok) throw new Error(j.msg || '上传失败');
+    VR.toast('背景已应用到房间 ✨', 'ok');
+    load();
+  } catch (err) {
+    VR.toast(err.message || '上传失败', 'err');
+  }
+}
+
+function renderUsers() {  const kw = (document.getElementById('userSearch').value || '').trim().toLowerCase();
+  let list = DATA.users || [];
+  if (kw) list = list.filter(u => (u.name || '').toLowerCase().includes(kw) || (u.id || '').toLowerCase().includes(kw));
+  const box = document.getElementById('userBody');
+  if (!list.length) { box.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-mute);padding:22px">没有匹配的用户</td></tr>'; return; }
+  box.innerHTML = list.map(u => `
+    <tr>
+      <td><div class="u-cell">${VR.avatarHtml(u, 32)}<div>
+        <div style="font-weight:600">${VR.esc(u.name)}</div>
+        <div class="hint mono">${VR.esc(u.id)}</div>
+      </div></div></td>
+      <td>${VR.genderIcon(u.gender)}</td>
+      <td>💰 ${VR.shortNum(u.coins)}</td>
+      <td>💖 ${VR.shortNum(u.charm)}</td>
+      <td>${u.vip ? '<span class="tag gold">VIP' + (u.vipLevel || 1) + '</span>' : '<span class="tag gray">普通</span>'}</td>
+      <td><div class="flex">
+        <input class="mini-input" type="number" value="1000" id="uc_${u.id}">
+        <button class="btn btn-sm btn-gold" onclick="giveCoins('${u.id}')">+金币</button>
+        <button class="btn btn-sm" onclick="setCharm('${u.id}')">设魅力</button>
+        <button class="btn btn-sm" onclick="toggleVip('${u.id}', ${u.vip ? 'false' : 'true'})">${u.vip ? '取消VIP' : '设VIP'}</button>
+        <button class="btn btn-sm" style="background:rgba(255,92,108,.2)" onclick="delUser('${u.id}','${VR.esc(u.name)}')">删除</button>
+      </div></td>
+    </tr>`).join('');
+}
+
+/* ---- 操作 ---- */
+async function giveCoins(uid) {
+  const inp = document.getElementById('c_' + uid) || document.getElementById('uc_' + uid);
+  const amount = Number(inp?.value) || 1000;
+  const r = await api('give-coins', { userId: uid, amount });
+  if (r) { VR.toast('已发放 ' + amount + ' 金币', 'ok'); load(); }
+}
+async function setCharm(uid) {
+  const v = prompt('设置魅力值为：', '1000');
+  if (v === null) return;
+  const r = await api('set-charm', { userId: uid, amount: Number(v) || 0 });
+  if (r) { VR.toast('魅力值已更新', 'ok'); load(); }
+}
+async function toggleVip(uid, vip) {
+  const r = await api('set-vip', { userId: uid, vip, vipLevel: vip ? 3 : 0 });
+  if (r) { VR.toast(vip ? '已设为 VIP' : '已取消 VIP', 'ok'); load(); }
+}
+async function delUser(uid, name) {
+  if (!confirm('确定删除用户「' + name + '」？此操作不可恢复。')) return;
+  const r = await api('clear-user', { userId: uid });
+  if (r) { VR.toast('已删除', 'ok'); load(); }
+}
+async function renameRoom(rid) {
+  const name = document.getElementById('rn_' + rid)?.value.trim();
+  if (!name) return VR.toast('房间名不能为空', 'err');
+  const r = await api('update-room', { roomId: rid, name });
+  if (r) { VR.toast('已修改', 'ok'); load(); }
+}
+async function delRoom(rid, name) {
+  if (!confirm('确定删除房间「' + name + '」？房间内的人会被断开。')) return;
+  const r = await api('delete-room', { roomId: rid });
+  if (r) { VR.toast('房间已删除', 'ok'); load(); }
+}
+async function giveAllCoins() {
+  if (!confirm('给所有用户各发 1000 金币？')) return;
+  const users = DATA.users || [];
+  if (!users.length) return VR.toast('还没有用户', 'err');
+  VR.toast('正在发放…');
+  for (const u of users) await api('give-coins', { userId: u.id, amount: 1000 });
+  VR.toast('已给 ' + users.length + ' 人发放 1000 金币', 'ok');
+  load();
+}
+async function saveVips() {
+  const vips = document.getElementById('vipsInput').value.split(',').map(s => s.trim()).filter(Boolean);
+  const r = await api('set-vips', { vips });
+  if (r) { VR.toast('VIP 码已保存', 'ok'); load(); }
+}
+async function savePwd() {
+  const p = document.getElementById('newPwd').value;
+  if (p.length < 4) return VR.toast('密码至少 4 位', 'err');
+  const r = await api('set-admin-password', { newPassword: p });
+  if (r) { VR.toast('密码已修改，请重新登录', 'ok'); sessionStorage.setItem('adminPwd', p); PWD = p; document.getElementById('newPwd').value = ''; }
+}
+
+/* ================= 音乐曲库 ================= */
+async function loadMusic() {
+  const r = await api('music-list', { q: document.getElementById('musicSearch').value.trim() });
+  if (!r) return;
+  MUSIC = r.list || [];
+  document.getElementById('musicSub').textContent =
+    r.total ? r.total + ' 首 · ' + fmtSize(r.totalSize) : '曲库是空的';
+  renderMusic();
+}
+
+function renderMusic() {
+  const kw = (document.getElementById('musicSearch').value || '').trim().toLowerCase();
+  let list = MUSIC;
+  if (kw) list = list.filter(m =>
+    (m.title || '').toLowerCase().includes(kw) || (m.artist || '').toLowerCase().includes(kw));
+
+  const box = document.getElementById('musicBody');
+  if (!list.length) {
+    box.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--text-mute);padding:26px">
+      ${MUSIC.length ? '没有匹配的歌曲' : '还没有歌，先上传几首吧 🎵'}</td></tr>`;
+    return;
+  }
+  box.innerHTML = list.map(m => `
+    <tr>
+      <td>
+        <div class="u-cell">
+          <div style="width:32px;height:32px;border-radius:9px;display:flex;align-items:center;justify-content:center;
+                      background:linear-gradient(135deg,rgba(123,107,255,.3),rgba(79,195,247,.2));font-size:15px">🎵</div>
+          <div>
+            <div style="font-weight:600">${VR.esc(m.title)}</div>
+            <div class="hint mono">${VR.esc(m.id)}</div>
+          </div>
+        </div>
+      </td>
+      <td>${VR.esc(m.artist || '—')}</td>
+      <td><span class="tag">${(m.ext || 'mp3').toUpperCase()}</span></td>
+      <td>${fmtSize(m.size)}</td>
+      <td class="hint">${new Date(m.uploadedAt).toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' })}</td>
+      <td><div class="flex">
+        <button class="btn btn-sm" onclick="previewMusic('${m.id}')">▶ 试听</button>
+        <button class="btn btn-sm" onclick="renameMusic('${m.id}')">✏️ 改名</button>
+        <button class="btn btn-sm" style="background:rgba(255,92,108,.2)" onclick="deleteMusic('${m.id}','${VR.esc(m.title)}')">删除</button>
+      </div></td>
+    </tr>`).join('');
+}
+
+function fmtSize(bytes) {
+  const b = Number(bytes) || 0;
+  if (b >= 1024 * 1024) return (b / 1024 / 1024).toFixed(1) + ' MB';
+  if (b >= 1024) return (b / 1024).toFixed(0) + ' KB';
+  return b + ' B';
+}
+
+function previewMusic(id) {
+  const url = '/api/music/file/' + id;
+  const a = new Audio(url);
+  a.volume = 0.8;
+  a.play().then(() => VR.toast('正在试听…', 'ok')).catch(() => VR.toast('试听失败', 'err'));
+  setTimeout(() => { a.pause(); a.src = ''; }, 30000);
+}
+
+async function renameMusic(id) {
+  const cur = MUSIC.find(m => m.id === id);
+  if (!cur) return;
+  const title = prompt('歌曲名：', cur.title);
+  if (title === null) return;
+  const artist = prompt('歌手：', cur.artist || '');
+  if (artist === null) return;
+  const r = await api('music-rename', { id, title, artist });
+  if (r) { VR.toast('已保存', 'ok'); loadMusic(); }
+}
+
+async function deleteMusic(id, title) {
+  if (!confirm('确定删除《' + title + '》？')) return;
+  const r = await api('music-delete', { id });
+  if (r) { VR.toast('已删除', 'ok'); loadMusic(); }
+}
+
+async function clearAllMusic() {
+  if (!MUSIC.length) return VR.toast('曲库本来就是空的', 'err');
+  if (!confirm('确定清空整个曲库？所有歌曲文件都会被删除，不可恢复。')) return;
+  const r = await api('music-clear-all');
+  if (r) { VR.toast('曲库已清空', 'ok'); loadMusic(); }
+}
+
+/* ---------- 上传 ---------- */
+function initUpload() {
+  const zone = document.getElementById('uploadZone');
+  const input = document.getElementById('musicFiles');
+
+  zone.addEventListener('click', () => input.click());
+
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); zone.classList.remove('dragover');
+    if (e.dataTransfer.files.length) uploadFiles([...e.dataTransfer.files]);
+  });
+
+  input.addEventListener('change', () => {
+    if (input.files.length) uploadFiles([...input.files]);
+    input.value = '';
+  });
+}
+
+/** 从文件名猜歌名与歌手，支持 "歌手 - 歌名.mp3" 格式 */
+function parseFileName(fileName) {
+  const base = fileName.replace(/\.[^.]+$/, '').trim();
+  // 常见格式： 歌手 - 歌名  /  歌名 - 歌手  /  纯歌名
+  const m = base.match(/^(.+?)\s*[-–—]\s*(.+)$/);
+  if (m) {
+    return { artist: m[1].trim(), title: m[2].trim() };
+  }
+  return { artist: '', title: base };
+}
+
+async function uploadFiles(files) {
+  const audioFiles = files.filter(f => /\.(mp3|m4a|wav|aac|ogg|flac)$/i.test(f.name));
+  if (!audioFiles.length) return VR.toast('没有找到支持的音频文件', 'err');
+
+  const prog = document.getElementById('uploadProgress');
+  const status = document.getElementById('uploadStatus');
+  const fill = document.getElementById('uploadFill');
+  prog.style.display = '';
+
+  let done = 0, failed = 0;
+  for (const f of audioFiles) {
+    status.textContent = `正在上传 ${done + 1}/${audioFiles.length}：${f.name}`;
+    fill.style.width = Math.round((done / audioFiles.length) * 100) + '%';
+
+    if (f.size > 30 * 1024 * 1024) {
+      failed++; done++;
+      VR.toast(`《${f.name}》超过 30MB，已跳过`, 'err');
+      continue;
+    }
+
+    const { title, artist } = parseFileName(f.name);
+    const ext = (f.name.split('.').pop() || 'mp3').toLowerCase();
+    const qs = new URLSearchParams({ password: PWD, title, artist, ext });
+
+    try {
+      const buf = await f.arrayBuffer();
+      const res = await fetch('/api/music/upload?' + qs.toString(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: buf
+      });
+      const j = await res.json();
+      if (j.ok) done++;
+      else { failed++; VR.toast(`《${f.name}》上传失败：${j.msg}`, 'err'); }
+    } catch (e) {
+      failed++; VR.toast(`《${f.name}》上传出错`, 'err');
+    }
+  }
+
+  fill.style.width = '100%';
+  status.textContent = failed
+    ? `完成：成功 ${done - failed} 首，失败 ${failed} 首`
+    : `✅ 全部上传成功（${done} 首）`;
+
+  setTimeout(() => { prog.style.display = 'none'; fill.style.width = '0%'; }, 2600);
+  loadMusic();
+}
+
+/* 每 8 秒刷新在线状态 */
+setInterval(() => { if (PWD && document.getElementById('adminPanel').style.display !== 'none') load(); }, 8000);
+</script>
+</body>
+</html>

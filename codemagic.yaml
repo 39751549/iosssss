@@ -1,0 +1,83 @@
+# ============================================================
+#  Codemagic 云打包配置：编译未签名 .ipa
+# ============================================================
+#
+#  Codemagic 对个人开发者提供每月 500 分钟免费额度，
+#  Mac mini 构建机，UI 友好，适合不熟命令行的情况。
+#
+#  用法：
+#    1. 注册 https://codemagic.io（用 GitHub 账号登录）
+#    2. Add application → 选你的仓库
+#    3. 构建类型选 "Other"（因为我们要自定义脚本）
+#    4. 它会自动读取本文件，点 Start build 即可
+#
+#  关于签名：
+#    这里刻意不做签名，产出未签名 .ipa，
+#    你拿回本地用永久签名工具重签后安装。
+# ============================================================
+
+workflows:
+  ios-unsigned-ipa:
+    name: Build unsigned IPA
+    max_build_duration: 40
+    instance_type: mac_mini_m2
+
+    environment:
+      xcode: latest
+      cocoapods: default
+
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+        - pattern: master
+          include: true
+
+    scripts:
+      - name: 显示环境
+        script: |
+          xcodebuild -version
+          swift --version
+
+      - name: 解析依赖（拉取 WebRTC）
+        script: |
+          cd ios-native
+          xcodebuild -resolvePackageDependencies \
+            -project VoiceRoom.xcodeproj \
+            -scheme VoiceRoom \
+            -clonedSourcePackagesDirPath .spm-cache
+
+      - name: 编译未签名 Archive
+        script: |
+          cd ios-native
+          xcodebuild clean archive \
+            -project VoiceRoom.xcodeproj \
+            -scheme VoiceRoom \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$CM_BUILD_DIR/VoiceRoom.xcarchive" \
+            -clonedSourcePackagesDirPath .spm-cache \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_ENTITLEMENTS="" \
+            DEVELOPMENT_TEAM=""
+
+      - name: 打包成 .ipa
+        script: |
+          set -e
+          APP_PATH="$CM_BUILD_DIR/VoiceRoom.xcarchive/Products/Applications/VoiceRoom.app"
+          test -d "$APP_PATH" || { echo "找不到 app"; exit 1; }
+
+          mkdir -p "$CM_BUILD_DIR/Payload"
+          cp -R "$APP_PATH" "$CM_BUILD_DIR/Payload/"
+
+          cd "$CM_BUILD_DIR"
+          zip -qry VoiceRoom-unsigned.ipa Payload
+          ls -lh VoiceRoom-unsigned.ipa
+
+    artifacts:
+      - $CM_BUILD_DIR/VoiceRoom-unsigned.ipa
+      - $CM_BUILD_DIR/VoiceRoom.xcarchive

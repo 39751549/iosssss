@@ -1,0 +1,36 @@
+# ============ Fly.io 部署配置（需绑卡，约 $2-4/月）============
+# 注意：Fly.io 已于 2024 年 10 月取消永久免费额度，新用户只有 2 小时试用
+# 如果坚持免费，请优先用 Koyeb 或 Render
+app = "voice-room"
+primary_region = "sin"          # 新加坡，国内访问较快
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "3000"
+  DATA_DIR = "/data"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  # 关键：必须关闭自动停止，否则 WebSocket 会在空闲时断开
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "connections"
+    hard_limit = 500
+    soft_limit = 250
+
+# 持久卷：保存用户与房间数据
+[[mounts]]
+  source = "voice_room_data"
+  destination = "/data"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 256

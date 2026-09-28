@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0B1020">
+<title>语音房 · 大厅</title>
+<link rel="stylesheet" href="/css/app.css">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icons/icon-180.png">
+</head>
+<body class="bg-aurora">
+
+<div class="page" id="page">
+
+  <!-- 顶部资料条 -->
+  <div class="card" id="profileCard" style="display:none">
+    <div class="profile-strip" onclick="openProfileEditor()">
+      <div id="myAvatar"></div>
+      <div class="profile-info">
+        <div class="pname" id="myName"></div>
+        <div class="pmeta" id="myMeta"></div>
+      </div>
+      <div style="font-size:20px;color:var(--text-mute)">›</div>
+    </div>
+    <div class="stat-row">
+      <div class="stat"><div class="sv" id="statCoins">0</div><div class="sl">💰 金币</div></div>
+      <div class="stat"><div class="sv charm" id="statCharm">0</div><div class="sl">💖 魅力值</div></div>
+      <div class="stat"><div class="sv" id="statVip" style="color:var(--brand-2)">—</div><div class="sl">👑 会员</div></div>
+    </div>
+  </div>
+
+  <!-- 未登录：登录卡片 -->
+  <div id="loginCard" class="page-center" style="min-height:auto;padding-top:8px">
+    <div class="logo-wrap">
+      <div class="logo-mark">🎙️</div>
+      <h1>语音房</h1>
+      <p>和朋友一起开黑聊天 · 听歌 · 送礼</p>
+    </div>
+    <div class="card">
+      <div class="card-title">👋 起个昵称就能进</div>
+      <div class="form-row">
+        <input class="input" id="loginName" placeholder="输入昵称（最多 20 字）" maxlength="20">
+      </div>
+      <div class="form-row">
+        <div class="seg" id="loginGender" style="margin-bottom:0">
+          <button data-g="male">♂ 男生</button>
+          <button data-g="female">♀ 女生</button>
+          <button data-g="secret" class="active">保密</button>
+        </div>
+      </div>
+      <button class="btn btn-primary btn-block" style="margin-top:16px" onclick="doLogin()">进入大厅</button>
+      <div class="tip" style="margin-top:14px">
+        <b>提示：</b>昵称和资料只保存在你自己的手机上，不上传任何个人信息。
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">👑 我有 VIP 码</div>
+      <div class="row">
+        <input class="input" id="vipCode" placeholder="输入 VIP 码" maxlength="20">
+        <button class="btn btn-gold" style="flex:none;padding:12px 16px" onclick="doVipLogin()">激活</button>
+      </div>
+      <div class="tip" style="margin-top:11px">VIP 可解锁金色名片、专属标识，以及 <b>5000 金币</b>。</div>
+    </div>
+  </div>
+
+  <!-- 已登录：房间列表 -->
+  <div id="lobbyCard" style="display:none">
+    <div class="card" id="myRoomCard" style="display:none">
+      <div class="card-title">🏠 我的永久房间 <span class="sub">无需每次创建</span></div>
+      <div id="myRoomBody"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">🚪 加入房间</div>
+      <div class="row" style="margin-bottom:12px">
+        <input class="input" id="joinNo" placeholder="输入 6 位房间号" maxlength="6" inputmode="numeric">
+        <button class="btn btn-primary" style="flex:none;padding:12px 18px" onclick="joinByNo()">进入</button>
+      </div>
+      <button class="btn btn-pink btn-block" onclick="openCreate()">✨ 创建 / 进入我的房间</button>
+    </div>
+
+    <div class="card">
+      <div class="card-title">🔥 正在热聊 <span class="sub" id="roomCount"></span>
+        <button class="btn btn-ghost btn-sm" style="margin-left:auto;padding:4px 9px" onclick="loadRooms()">↻</button>
+      </div>
+      <div id="roomList"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">⚙️ 其他</div>
+      <div class="grid2">
+        <button class="btn" onclick="openProfileEditor()">✏️ 编辑名片</button>
+        <button class="btn" onclick="openVipInput()">👑 VIP 激活</button>
+      </div>
+    </div>
+
+    <div class="tip" style="text-align:center;background:transparent;border:none;color:var(--text-mute)">
+      长按页面可「添加到主屏幕」，像 App 一样使用
+    </div>
+  </div>
+</div>
+
+<!-- 遮罩 -->
+<div class="sheet-mask" id="mask" onclick="VR.closeSheet()"></div>
+
+<!-- 创建房间弹层 -->
+<div class="sheet" id="sheetCreate">
+  <div class="sheet-handle"></div>
+  <div class="sheet-title">创建房间</div>
+  <div class="sheet-body">
+    <div class="form-row">
+      <label class="form-label">房间名称</label>
+      <input class="input" id="newRoomName" placeholder="给房间起个名字" maxlength="22">
+    </div>
+    <div class="form-row">
+      <label class="form-label">动态房间背景</label>
+      <div class="bg-picker" id="bgPicker"></div>
+    </div>
+    <button class="btn btn-primary btn-block" style="margin-top:18px" onclick="doCreate()">创建并进入</button>
+    <div class="tip" style="margin:14px 0 4px">创建后会生成一个 <b>6 位永久房间号</b>，发给朋友就能一起进来。每人只有一个永久房间，下次进入大厅可直接一键回房。</div>
+  </div>
+</div>
+
+<!-- 编辑资料弹层 -->
+<div class="sheet" id="sheetProfile">
+  <div class="sheet-handle"></div>
+  <div class="sheet-title">编辑我的名片</div>
+  <div class="sheet-body">
+    <div class="form-row">
+      <label class="form-label">头像</label>
+      <div class="avatar-picker">
+        <div id="editAvatar"></div>
+        <div class="avatar-actions">
+          <button class="btn btn-sm" onclick="document.getElementById('avatarFile').click()">📷 上传图片</button>
+          <button class="btn btn-sm" onclick="randomAvatar()">🎲 随机生成</button>
+        </div>
+      </div>
+      <div class="avatar-gen" id="avatarGen"></div>
+      <input type="file" id="avatarFile" accept="image/*" style="display:none">
+    </div>
+    <div class="form-row">
+      <label class="form-label">昵称</label>
+      <input class="input" id="editName" placeholder="昵称" maxlength="20">
+    </div>
+    <div class="form-row">
+      <label class="form-label">性别</label>
+      <div class="seg" id="editGender">
+        <button data-g="male">♂ 男生</button>
+        <button data-g="female">♀ 女生</button>
+        <button data-g="secret">保密</button>
+      </div>
+    </div>
+    <div class="form-row">
+      <label class="form-label">个性签名</label>
+      <input class="input" id="editBio" placeholder="说点什么吧（最多 60 字）" maxlength="60">
+    </div>
+    <button class="btn btn-primary btn-block" style="margin-top:16px" onclick="saveProfile()">保存名片</button>
+    <div style="height:6px"></div>
+  </div>
+</div>
+
+<!-- VIP 输入弹层 -->
+<div class="sheet" id="sheetVip">
+  <div class="sheet-handle"></div>
+  <div class="sheet-title">VIP 激活</div>
+  <div class="sheet-body">
+    <div class="form-row">
+      <input class="input" id="vipCode2" placeholder="输入 VIP 码" maxlength="20">
+    </div>
+    <button class="btn btn-gold btn-block" onclick="doVipLogin2()">立即激活</button>
+    <div class="tip" style="margin:14px 0 6px">VIP 权益：金色皇冠标识、专属名片框、5000 金币赠送。</div>
+  </div>
+</div>
+
+<script src="/js/common.js"></script>
+<script>
+let ME = null;      // 当前用户对象
+let USER_ID = null; // 持久 userId
+let WS = null;
+let selectedBg = 'aurora';
+let loginGender = 'secret';
+let online = false;
+
+/* ============ 初始化 ============ */
+(function init() {
+  USER_ID = VR.LS.get('userId', null);
+  const cached = VR.LS.get('user', null);
+  const firstName = VR.LS.get('name', '');
+
+  // 渲染背景选择器
+  document.getElementById('bgPicker').innerHTML = VR.BACKGROUNDS.map(b =>
+    `<div class="bg-opt ${b.cls}" data-id="${b.id}" onclick="pickBg('${b.id}')">
+       <div class="bg-check">✓</div><div class="bg-label">${b.name}</div>
+     </div>`).join('');
+  pickBg('aurora');
+
+  // 性别切换
+  bindGender('loginGender', v => loginGender = v);
+  bindGender('editGender', v => editGenderSel = v);
+
+  // 头像上传
+  document.getElementById('avatarFile').addEventListener('change', onAvatarFile);
+
+  if (firstName) document.getElementById('loginName').value = firstName;
+
+  connect();
+  if (USER_ID && cached) {
+    // 有缓存直接进大厅
+    ME = cached;
+    setTimeout(() => { WS && WS.send(JSON.stringify({ type: 'auth', userId: USER_ID })); }, 300);
+  }
+})();
+
+function bindGender(id, cb) {
+  const box = document.getElementById(id);
+  box.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+    box.querySelectorAll('button').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    cb(b.dataset.g);
+  }));
+}
+
+/* ============ 连接 ============ */
+function connect() {
+  WS = VR.connect(onMsg, () => {
+    online = true;
+    if (USER_ID) WS.send(JSON.stringify({ type: 'auth', userId: USER_ID }));
+    if (ME) loadRooms();
+  }, () => {
+    online = false;
+    if (ME) VR.toast('连接已断开，正在重连…', 'err');
+    setTimeout(connect, 2200);
+  });
+}
+
+function send(o) { if (WS && WS.readyState === 1) WS.send(JSON.stringify(o)); }
+
+function onMsg(m) {
+  switch (m.type) {
+    case 'auth:ok': {
+      USER_ID = m.data.userId;
+      ME = m.data.user;
+      VR.LS.set('userId', USER_ID);
+      VR.LS.set('user', ME);
+      if (ME.name) VR.LS.set('name', ME.name);
+      renderLobby();
+      loadRooms();
+      send({ type: 'room:my', userId: USER_ID });
+      break;
+    }
+    case 'room:my': {
+      // 我的永久房间（没有则为 null）
+      renderMyRoom(m.data);
+      break;
+    }
+    case 'room:list':
+      renderRooms(m.data);
+      break;
+    case 'room:created': {
+      VR.LS.set('lastRoom', m.data);
+      location.href = '/room.html?room=' + m.data.id;
+      break;
+    }
+    case 'join:fail':
+      VR.toast(m.msg || '进入失败', 'err');
+      break;
+    case 'profile:ok': {
+      ME = m.data;
+      VR.LS.set('user', ME);
+      if (ME.name) VR.LS.set('name', ME.name);
+      renderLobby();
+      VR.toast('名片已更新', 'ok');
+      break;
+    }
+    case 'vip:ok': {
+      ME = m.data; VR.LS.set('user', ME);
+      renderLobby();
+      VR.toast('🎉 VIP 激活成功，获得 5000 金币', 'ok');
+      break;
+    }
+    case 'vip:fail': VR.toast(m.msg || '激活失败', 'err'); break;
+    case 'error': VR.toast(m.msg || '操作失败', 'err'); break;
+  }
+}
+
+/* ============ 登录 ============ */
+function doLogin() {
+  const name = document.getElementById('loginName').value.trim();
+  if (!name) return VR.toast('请输入昵称', 'err');
+  if (!online) return VR.toast('还没连上服务器，稍等一下', 'err');
+  VR.LS.set('name', name);
+  send({ type: 'auth', userId: USER_ID || '', profile: { name, gender: loginGender } });
+}
+
+function doVipLogin() {
+  const code = document.getElementById('vipCode').value.trim();
+  if (!code) return VR.toast('请输入 VIP 码', 'err');
+  if (!ME) return VR.toast('请先进入大厅', 'err');
+  send({ type: 'vip:login', userId: USER_ID, code });
+}
+function doVipLogin2() {
+  const code = document.getElementById('vipCode2').value.trim();
+  if (!code) return VR.toast('请输入 VIP 码', 'err');
+  send({ type: 'vip:login', userId: USER_ID, code });
+  VR.closeSheet();
+}
+function openVipInput() { VR.openSheet('sheetVip'); }
+
+/* ============ 渲染 ============ */
+function renderLobby() {
+  if (!ME) return;
+  document.getElementById('loginCard').style.display = 'none';
+  document.getElementById('profileCard').style.display = '';
+  document.getElementById('lobbyCard').style.display = '';
+
+  document.getElementById('myAvatar').innerHTML = VR.avatarHtml(ME, 56);
+  const vipBadge = ME.vip ? ' <span class="badge">👑 VIP' + (ME.vipLevel || 1) + '</span>' : '';
+  document.getElementById('myName').innerHTML = VR.esc(ME.name) + vipBadge;
+  const g = VR.GENDER[ME.gender] || VR.GENDER.secret;
+  document.getElementById('myMeta').innerHTML = `${VR.genderIcon(ME.gender)} ${g.label} · ID ${VR.esc(String(ME.id).slice(-6).toUpperCase())}`;
+
+  document.getElementById('statCoins').textContent = VR.shortNum(ME.coins);
+  document.getElementById('statCharm').textContent = VR.shortNum(ME.charm);
+  document.getElementById('statVip').textContent = ME.vip ? 'VIP' + (ME.vipLevel || 1) : '普通';
+}
+
+function renderRooms(list) {
+  const box = document.getElementById('roomList');
+  document.getElementById('roomCount').textContent = list.length ? list.length + ' 个' : '';
+  if (!list.length) {
+    box.innerHTML = '<div class="empty-hint">还没有房间<br>创建第一个吧 ✨</div>';
+    return;
+  }
+  box.innerHTML = list.map(r => `
+    <div class="room-item" onclick="joinRoom('${r.id}')">
+      <div class="room-thumb ${VR.bgClass(r.background)}">${VR.bgIcon(r.background)}</div>
+      <div class="room-meta">
+        <div class="rn">${VR.esc(r.name)}</div>
+        <div class="ro">房间号 ${r.no}</div>
+      </div>
+      <div class="room-live ${r.count ? '' : 'idle'}">${r.count ? r.count + ' 人' : '空闲'}</div>
+    </div>`).join('');
+}
+
+function loadRooms() { send({ type: 'room:list' }); }
+
+/* ---------- 我的永久房间卡片 ---------- */
+function renderMyRoom(room) {
+  const card = document.getElementById('myRoomCard');
+  const body = document.getElementById('myRoomBody');
+  if (!room) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  body.innerHTML = `
+    <div class="my-room-hero" onclick="joinRoom('${room.id}')">
+      <div class="mrh-thumb ${VR.bgClass(room.background)}">${VR.bgIcon(room.background)}</div>
+      <div class="mrh-meta">
+        <div class="mrh-name">${VR.esc(room.name)}</div>
+        <div class="mrh-no">房间号 ${room.no} · ${room.count ? room.count + ' 人在房间里' : '此刻没人'}</div>
+      </div>
+      <div class="mrh-go">进入 ›</div>
+    </div>`;
+}
+
+/* ============ 房间操作 ============ */
+function joinRoom(id) {
+  if (!ME) return VR.toast('请先登录', 'err');
+  send({ type: 'room:join', userId: USER_ID, roomId: id });
+}
+function joinByNo() {
+  const no = document.getElementById('joinNo').value.trim();
+  if (!/^\d{6}$/.test(no)) return VR.toast('请输入 6 位数字房间号', 'err');
+  send({ type: 'room:join', userId: USER_ID, no });
+}
+
+function openCreate() {
+  document.getElementById('newRoomName').value = (ME.name || '我') + ' 的房间';
+  VR.openSheet('sheetCreate');
+}
+function pickBg(id) {
+  selectedBg = id;
+  document.querySelectorAll('#bgPicker .bg-opt').forEach(el => el.classList.toggle('sel', el.dataset.id === id));
+}
+function doCreate() {
+  const name = document.getElementById('newRoomName').value.trim();
+  send({ type: 'room:create', userId: USER_ID, name, background: selectedBg });
+  VR.closeSheet();
+}
+
+/* ============ 资料编辑 ============ */
+let editGenderSel = 'secret';
+let editAvatarData = null;
+
+function openProfileEditor() {
+  if (!ME) return;
+  editAvatarData = ME.avatar || null;
+  editGenderSel = ME.gender || 'secret';
+  document.getElementById('editName').value = ME.name || '';
+  document.getElementById('editBio').value = ME.bio || '';
+  document.getElementById('editGender').querySelectorAll('button').forEach(b =>
+    b.classList.toggle('active', b.dataset.g === editGenderSel));
+  renderEditAvatar();
+  renderAvatarGen();
+  VR.openSheet('sheetProfile');
+}
+function renderEditAvatar() {
+  document.getElementById('editAvatar').innerHTML =
+    VR.avatarHtml({ id: USER_ID, name: document.getElementById('editName')?.value || ME.name, avatar: editAvatarData }, 74);
+}
+function renderAvatarGen() {
+  const box = document.getElementById('avatarGen');
+  const name = document.getElementById('editName').value || ME.name;
+  box.innerHTML = Array.from({ length: 6 }, (_, i) =>
+    `<div class="avatar" style="width:100%;aspect-ratio:1;font-size:16px;cursor:pointer;background-color:${VR.avatarColor(name + i)};background-image:url('${VR.genAvatar(name, i)}')" onclick="pickGenAvatar(${i})"></div>`
+  ).join('');
+}
+function pickGenAvatar(i) {
+  const name = document.getElementById('editName').value || ME.name;
+  editAvatarData = VR.genAvatar(name, i);
+  renderEditAvatar();
+  VR.haptic();
+}
+function randomAvatar() {
+  const name = document.getElementById('editName').value || ME.name;
+  editAvatarData = VR.genAvatar(name, Math.floor(Math.random() * 12));
+  renderEditAvatar();
+  VR.haptic();
+}
+async function onAvatarFile(e) {
+  const f = e.target.files && e.target.files[0];
+  if (!f) return;
+  if (f.size > 8 * 1024 * 1024) return VR.toast('图片太大了（限 8MB）', 'err');
+  try {
+    VR.toast('正在处理图片…');
+    editAvatarData = await VR.fileToCompressedDataURL(f, 256, 0.82);
+    renderEditAvatar();
+  } catch { VR.toast('图片处理失败', 'err'); }
+  e.target.value = '';
+}
+function saveProfile() {
+  const name = document.getElementById('editName').value.trim();
+  if (!name) return VR.toast('昵称不能为空', 'err');
+  const bio = document.getElementById('editBio').value.trim();
+  send({ type: 'profile:update', userId: USER_ID,
+         patch: { name, bio, gender: editGenderSel, avatar: editAvatarData || '' } });
+  VR.closeSheet();
+}
+
+// 昵称输入实时更新头像预览
+document.getElementById('editName').addEventListener('input', () => {
+  renderEditAvatar(); renderAvatarGen();
+});
+
+/* 后台返回时刷新 */
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && ME) { loadRooms(); send({ type: 'room:my', userId: USER_ID }); }
+});
+</script>
+</body>
+</html>

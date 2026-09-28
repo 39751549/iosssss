@@ -1,0 +1,8 @@
+node_modules
+data
+shots
+.chrome-tmp
+*.log
+.DS_Store
+ios-app/node_modules
+ios-app/ios
