@@ -22,3 +22,4 @@ ios-app/
 ios-native/.spm-cache/
 ios-native/*.jpg
 *.ipa
+data-test-local/
