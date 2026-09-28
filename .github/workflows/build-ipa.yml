@@ -104,7 +104,7 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
-      - name: 发布 IPA 到 Releases（tag: ipa-latest）
+      - name: "发布 IPA 到 Releases（tag: ipa-latest）"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

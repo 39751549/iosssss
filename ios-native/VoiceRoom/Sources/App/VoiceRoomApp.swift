@@ -184,3 +184,5 @@ struct FloatingMusicWidget: View {
 }
 
 // build bump: v2 music panel + vip system
+
+// build bump 2: fix workflow yaml syntax
