@@ -182,3 +182,5 @@ struct FloatingMusicWidget: View {
         }
     }
 }
+
+// build bump: v2 music panel + vip system
