@@ -264,6 +264,12 @@ function onMsg(m) {
       location.href = '/room.html?room=' + m.data.id;
       break;
     }
+    case 'join:ok': {
+      // 点房间卡片 / 房间号进入成功 → 跳到房间页
+      VR.LS.set('lastRoom', { id: m.data.roomId });
+      location.href = '/room.html?room=' + m.data.roomId;
+      break;
+    }
     case 'join:fail':
       VR.toast(m.msg || '进入失败', 'err');
       break;
@@ -432,6 +438,7 @@ async function onAvatarFile(e) {
   const f = e.target.files && e.target.files[0];
   if (!f) return;
   if (f.size > 8 * 1024 * 1024) return VR.toast('图片太大了（限 8MB）', 'err');
+  if (/image\/gif/i.test(f.type) && f.size > 550 * 1024) return VR.toast('GIF 头像需要小于 550KB，请压缩后再试', 'err');
   try {
     VR.toast('正在处理图片…');
     editAvatarData = await VR.fileToCompressedDataURL(f, 256, 0.82);

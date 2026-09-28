@@ -728,7 +728,7 @@ wss.on('connection', (ws) => {
         if (!(target >= -1 && target <= 8)) return;
         const isOwner = room.ownerId === me.userId;
         if (target === 0 && !isOwner) return reply({ type: 'error', msg: '0 号主位是房主专位' });
-        if (target > 0 && isOwner) return reply({ type: 'error', msg: '房主固定坐在 0 号主位' });
+        // 房主也可以换到 1-8 号麦位（0 号空出来时宾客仍不能坐）
         if (target >= 0 && [...rt.members.values()].some(m => m.seat === target && m.clientId !== clientId))
           return reply({ type: 'error', msg: '该麦位已被占用' });
         me.seat = target;

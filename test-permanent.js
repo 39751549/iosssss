@@ -1,6 +1,9 @@
-/** 冒烟测试：永久房间 + 9 座位制（0=房主主位，1-8 宾客） */
+/** 冒烟测试：永久房间 + 9 座位制（0=房主主位，1-8 宾客）
+ *  可用环境变量 VR_URL 指定服务器，默认本地 ws://127.0.0.1:8199
+ *  例：VR_URL=ws://43.142.76.172:8125 node test-permanent.js
+ */
 const WebSocket = require('ws');
-const URL = 'ws://127.0.0.1:8199';
+const URL = process.env.VR_URL || 'ws://127.0.0.1:8199';
 
 let failures = 0;
 function check(name, cond, extra) {
@@ -107,6 +110,19 @@ async function main() {
   console.log('\n[8] 麦位保护');
   check('宾客抢 0 号被拒', /主位/.test(r8.msg), r8.msg);
 
+  /* 8.5 房主可以换到 1-8 号麦位，也可以回 0 号 */
+  A.send({ type: 'seat:change', seat: 3 });
+  await sleep(200);
+  const s8a = A.msgs.filter(m => m.type === 'room:state').pop();
+  const aAfterMove = s8a.data.members.find(m => m.user.id === 'userA_' + TAG);
+  check('房主换到 3 号成功', aAfterMove && aAfterMove.seat === 3,
+        s8a.data.members.map(m => [m.user.id, m.seat]));
+  A.send({ type: 'seat:change', seat: 0 });
+  await sleep(200);
+  const s8b = A.msgs.filter(m => m.type === 'room:state').pop();
+  const aAfterBack = s8b.data.members.find(m => m.user.id === 'userA_' + TAG);
+  check('房主回到 0 号成功', aAfterBack && aAfterBack.seat === 0);
+
   /* 9. 非房主不能解散 */
   B.send({ type: 'room:destroy', userId: 'userB_' + TAG, roomId: room.id });
   const r9 = await B.waitFor(m => m.type === 'error' && /房主/.test(m.msg || ''));
@@ -148,6 +164,12 @@ async function main() {
   check('房间内该用户只剩 1 个会话', dCount === 0 || dCount === 1, dCount);
   check('旧连接已不在房间', !s12.data.members.some(m => m.user.id === D.userId && m.clientId !== s12.data.members.find(x => x.user.id === D.userId)?.clientId));
   D.close(); D2.close();
+
+  /* 13. 清理：解散重建的测试房间（不给线上留垃圾数据） */
+  A.send({ type: 'room:destroy', userId: A.userId, roomId: r11.data.id });
+  await A.waitFor(m => m.type === 'room:destroyed');
+  console.log('\n[12] 清理测试房间');
+  check('测试房间已解散', true);
 
   [A, B, C].forEach(c => c.close());
   console.log('\n' + (failures === 0 ? '🎉 全部通过' : '💥 ' + failures + ' 项失败'));

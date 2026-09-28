@@ -15,19 +15,18 @@
 
   <!-- 顶栏 -->
   <div class="topbar">
-    <button class="icon-btn" onclick="leaveRoom()">‹</button>
+    <button class="icon-btn" onclick="leaveRoom()" title="离开">‹</button>
     <div class="room-chip" onclick="openSheet('sheetRoomSettings')">
       <span class="rno" id="roomNo">------</span>
       <span class="rname" id="roomName">加载中…</span>
       <span class="cnt" id="roomCount">0</span>
     </div>
-    <button class="icon-btn" id="btnHeadset" onclick="toggleSpeaker()" title="扬声器">🔊</button>
     <button class="icon-btn" onclick="openSheet('sheetMembers')" title="成员">👥</button>
     <button class="icon-btn" onclick="openSheet('sheetRoomSettings')" title="房间设置">⋮</button>
   </div>
 
-  <!-- 右侧悬浮音乐按钮 -->
-  <button class="fab-music" id="fabMusic" onclick="openSheet('sheetMusic')">
+  <!-- 右侧悬浮音乐按钮（可拖动，轻点打开面板） -->
+  <button class="fab-music" id="fabMusic">
     <div class="fm-disc"><span class="fm-note" id="fabNote">🎵</span></div>
     <div class="fm-title" id="fabTitle" style="display:none">一起听歌</div>
   </button>
@@ -46,6 +45,7 @@
   <!-- 底部工具栏 -->
   <div class="bottombar">
     <button class="icon-btn" id="btnMic" onclick="toggleMic()" title="麦克风">🎤</button>
+    <button class="icon-btn" id="btnHeadset" onclick="toggleSpeaker()" title="扬声器">🔊</button>
     <button class="icon-btn" onclick="openSheet('sheetGift')" title="礼物">🎁</button>
     <input class="chat-input" id="chatInput" placeholder="说点什么…" maxlength="200"
            onkeydown="if(event.key==='Enter')sendChat()">
@@ -378,8 +378,9 @@ function renderSeats(s) {
   const bySeat = {};
   s.members.forEach(m => { if (m.seat >= 0) bySeat[m.seat] = m; });
 
-  /* 房主主位：全透明圆形，皇冠 + "房"名条 */
-  const host = s.members.find(m => m.clientId === s.hostClientId);
+  /* 房主主位：0 号麦上的人（房主换到宾客麦后主位自动空出） */
+  const host = bySeat[0];
+  const amOwner = s.room && s.room.ownerId === USER_ID;
   if (host) {
     const speaking = speakingSet.has(host.clientId) && !host.muted;
     hostRow.innerHTML = `
@@ -396,21 +397,23 @@ function renderSeats(s) {
       </div>`;
   } else {
     hostRow.innerHTML = `
-      <div class="host-empty">
+      <div class="host-empty ${amOwner ? 'can-sit' : ''}" ${amOwner ? 'onclick="takeSeat(0)"' : ''}>
         <div class="hc">👑</div>
-        <div class="ht">房主位</div>
+        <div class="ht">${amOwner ? '回到主位' : '房主位'}</div>
       </div>`;
   }
 
-  /* 宾客麦位 1-8（2 行 x 4 列，半透明圆 + 号） */
+  /* 宾客麦位 1-8（2 行 x 4 列，半透明圆 + 号；房主坐进来时带皇冠） */
   let html = '';
   for (let i = 1; i <= 8; i++) {
     const m = bySeat[i];
     if (m) {
       const isMe = m.clientId === clientId;
       const speaking = speakingSet.has(m.clientId) && !m.muted;
+      const isOwnerHere = m.clientId === s.hostClientId;
       html += `<div class="seat ${isMe ? 'mine' : ''} ${speaking ? 'speaking' : ''}"
                     onclick="openCard('${m.clientId}')">
+        ${isOwnerHere ? '<div class="seat-crown">👑</div>' : ''}
         <div class="mic-state ${m.muted ? 'muted' : ''}">${m.muted ? '🔇' : '🎤'}</div>
         ${VR.avatarHtml(m.user, 54)}
         <div class="sname">${VR.esc(m.user.name)}${m.user.vip ? ' <span class="badge">V</span>' : ''}</div>
@@ -512,6 +515,7 @@ async function onRoomAvatarFile(e) {
   const f = e.target.files && e.target.files[0];
   if (!f) return;
   if (f.size > 8 * 1024 * 1024) return VR.toast('图片太大了（限 8MB）', 'err');
+  if (/image\/gif/i.test(f.type) && f.size > 550 * 1024) return VR.toast('GIF 头像需要小于 550KB，请压缩后再试', 'err');
   try { editAvatarData = await VR.fileToCompressedDataURL(f, 256, 0.82); renderRoomEditAvatar(); }
   catch { VR.toast('图片处理失败', 'err'); }
   e.target.value = '';
@@ -844,6 +848,56 @@ function syncMusic(s) {
     audio.dataset.songId = '';
   }
 }
+
+/* ---------- 悬浮音乐按钮：可拖动（移动 <6px 视为轻点 → 打开音乐面板） ---------- */
+(function initFabDrag() {
+  const fab = document.getElementById('fabMusic');
+  if (!fab) return;
+  const KEY = 'vr_fab_pos';
+  // 恢复上次位置
+  try {
+    const saved = JSON.parse(localStorage.getItem(KEY) || 'null');
+    if (saved && typeof saved.x === 'number') {
+      fab.style.left = Math.min(Math.max(0, saved.x), innerWidth - 60) + 'px';
+      fab.style.top = Math.min(Math.max(0, saved.y), innerHeight - 60) + 'px';
+      fab.style.right = 'auto';
+    }
+  } catch {}
+
+  let dragging = false, moved = false, sx = 0, sy = 0, ox = 0, oy = 0;
+  fab.addEventListener('pointerdown', (e) => {
+    dragging = true; moved = false;
+    sx = e.clientX; sy = e.clientY;
+    const r = fab.getBoundingClientRect();
+    ox = r.left; oy = r.top;
+    try { fab.setPointerCapture(e.pointerId); } catch {}
+    e.preventDefault();
+  });
+  fab.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const dx = e.clientX - sx, dy = e.clientY - sy;
+    if (!moved && Math.hypot(dx, dy) < 6) return;
+    if (!moved) { moved = true; fab.classList.add('dragging'); }
+    const nx = Math.min(Math.max(4, ox + dx), innerWidth - fab.offsetWidth - 4);
+    const ny = Math.min(Math.max(4, oy + dy), innerHeight - fab.offsetHeight - 4);
+    fab.style.left = nx + 'px';
+    fab.style.top = ny + 'px';
+    fab.style.right = 'auto';
+  });
+  const endDrag = () => {
+    if (!dragging) return;
+    dragging = false;
+    fab.classList.remove('dragging');
+    if (moved) {
+      const r = fab.getBoundingClientRect();
+      try { localStorage.setItem(KEY, JSON.stringify({ x: r.left, y: r.top })); } catch {}
+    } else {
+      openSheet('sheetMusic'); // 轻点 → 打开音乐面板
+    }
+  };
+  fab.addEventListener('pointerup', endDrag);
+  fab.addEventListener('pointercancel', endDrag);
+})();
 
 function musicCtl(action, songId) {
   send({ type: 'music:control', action, songId });

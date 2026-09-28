@@ -48,15 +48,17 @@ const VR = (() => {
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
-  /** 渲染头像 HTML */
+  /** 渲染头像 HTML（自定义头像不垫底色，透明 PNG 保持透明） */
   function avatarHtml(user, size, extraStyle) {
     const u = user || {};
     const sz = size || 40;
     const style = `width:${sz}px;height:${sz}px;font-size:${Math.round(sz * 0.38)}px;` + (extraStyle || '');
     const src = u.avatar || genAvatar(u.name, null);
     const initial = esc((u.name || '?').trim()[0] || '?').toUpperCase();
-    return `<div class="avatar" style="${style}background-color:${avatarColor(u.id || u.name)}">
-      <img src="${esc(src)}" alt="" onerror="this.style.display='none';this.parentNode.textContent='${initial}'">
+    const bgc = u.avatar ? '' : `background-color:${avatarColor(u.id || u.name)};`;
+    const fallback = `this.parentNode.style.background='${avatarColor(u.id || u.name)}';this.style.display='none';this.parentNode.textContent='${initial}'`;
+    return `<div class="avatar" style="${style}${bgc}">
+      <img src="${esc(src)}" alt="" onerror="${fallback}">
     </div>`;
   }
 
@@ -98,8 +100,21 @@ const VR = (() => {
     else document.querySelectorAll('.modal-mask').forEach(m => m.classList.remove('show'));
   }
 
-  /* ---------- 图片压缩（头像上传） ---------- */
+  /* ---------- 图片压缩（上传用，格式感知） ----------
+   * GIF  → 原样直传（保留动画，canvas 会把动图压成静态图）
+   * PNG/WebP → canvas 缩放后导出 PNG（保留透明通道）
+   * 其他(JPG 等) → canvas 缩放后导出 JPEG（体积小） */
   function fileToCompressedDataURL(file, maxSize = 256, quality = 0.82) {
+    const type = (file && file.type || '').toLowerCase();
+    if (type === 'image/gif') {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    }
+    const outType = (type === 'image/png' || type === 'image/webp') ? 'image/png' : 'image/jpeg';
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => {
@@ -111,7 +126,7 @@ const VR = (() => {
           c.width = w; c.height = h;
           const ctx = c.getContext('2d');
           ctx.drawImage(img, 0, 0, w, h);
-          resolve(c.toDataURL('image/jpeg', quality));
+          resolve(c.toDataURL(outType, quality));
         };
         img.onerror = reject;
         img.src = reader.result;

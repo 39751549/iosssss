@@ -226,12 +226,15 @@ input, textarea { outline: none; }
 }
 .host-empty .ht { font-size: 11px; color: var(--text-mute); }
 
-/* ---------- 悬浮音乐按钮（右侧） ---------- */
+/* ---------- 悬浮音乐按钮（可拖动，默认右侧偏上不挡麦位） ---------- */
 .fab-music {
-  position: absolute; right: 10px; top: 33%; z-index: 40;
+  position: fixed; right: 10px; top: 16%; z-index: 40;
   display: flex; flex-direction: column; align-items: center; gap: 5px;
   background: transparent; border: none; max-width: 120px;
+  touch-action: none; user-select: none; -webkit-user-select: none;
+  cursor: grab;
 }
+.fab-music.dragging { cursor: grabbing; opacity: .85; }
 .fab-music .fm-disc {
   width: 46px; height: 46px; border-radius: 50%;
   background: rgba(0,0,0,.42); border: 1px solid var(--border);
@@ -369,6 +372,15 @@ input, textarea { outline: none; }
   border: 1px solid rgba(255,255,255,.1);
 }
 .seat-hint { font-size: 10px; color: var(--text-mute); }
+/* 宾客席上的房主皇冠 */
+.seat-crown {
+  position: absolute; top: -7px; left: 50%; transform: translateX(-50%);
+  font-size: 14px; filter: drop-shadow(0 1px 3px rgba(0,0,0,.5));
+  z-index: 2;
+}
+/* 房主点主位空位可回到 0 号 */
+.host-empty.can-sit { cursor: pointer; }
+.host-empty.can-sit .hc { opacity: 1; border-color: rgba(255,201,60,.7); box-shadow: 0 0 12px rgba(255,201,60,.25); }
 .seat .sname {
   font-size: 11.5px; font-weight: 600; max-width: 100%;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
