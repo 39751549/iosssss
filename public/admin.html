@@ -314,7 +314,7 @@ function renderUsers() {  const kw = (document.getElementById('userSearch').valu
       <td>${VR.genderIcon(u.gender)}</td>
       <td>💰 ${VR.shortNum(u.coins)}</td>
       <td>💖 ${VR.shortNum(u.charm)}</td>
-      <td>${u.vip ? '<span class="tag gold">VIP' + (u.vipLevel || 1) + '</span>' : '<span class="tag gray">普通</span>'}</td>
+      <td>${u.vip ? '<span class="tag gold">💎VIP' + (u.vipLevel || 1) + '</span>' : '<span class="tag gray">普通</span>'}</td>
       <td><div class="flex">
         <input class="mini-input" type="number" value="1000" id="uc_${u.id}">
         <button class="btn btn-sm btn-gold" onclick="giveCoins('${u.id}')">+金币</button>
@@ -339,8 +339,14 @@ async function setCharm(uid) {
   if (r) { VR.toast('魅力值已更新', 'ok'); load(); }
 }
 async function toggleVip(uid, vip) {
-  const r = await api('set-vip', { userId: uid, vip, vipLevel: vip ? 3 : 0 });
-  if (r) { VR.toast(vip ? '已设为 VIP' : '已取消 VIP', 'ok'); load(); }
+  let level = 3;
+  if (vip) {
+    const v = prompt('请输入 VIP 等级（1-12）', '3');
+    if (v === null) return;
+    level = Math.max(1, Math.min(12, Number(v) || 3));
+  }
+  const r = await api('set-vip', { userId: uid, vip, vipLevel: vip ? level : 0 });
+  if (r) { VR.toast(vip ? '已设为 VIP' + level + ' 级' : '已取消 VIP', 'ok'); load(); }
 }
 async function delUser(uid, name) {
   if (!confirm('确定删除用户「' + name + '」？此操作不可恢复。')) return;

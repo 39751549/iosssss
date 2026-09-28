@@ -594,7 +594,7 @@ struct ChatRow: View {
                avatar: message.avatar ?? "",
                gender: .secret, bio: "",
                coins: 0, charm: 0,
-               vip: message.vip == true, vipLevel: 0)
+               vip: message.vip == true, vipLevel: message.vipLevel ?? 0)
     }
 
     private var nameColor: Color {

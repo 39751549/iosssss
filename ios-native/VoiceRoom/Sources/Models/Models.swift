@@ -107,6 +107,7 @@ struct VRChatMessage: Codable, Identifiable, Equatable {
     var name: String?
     var avatar: String?
     var vip: Bool?
+    var vipLevel: Int?
     var at: Double
 
     var isSystem: Bool { sys == true }
@@ -184,49 +185,33 @@ struct VRRoomState: Codable, Equatable {
 // MARK: - 房间背景主题
 
 enum RoomBackground: String, CaseIterable, Identifiable {
-    case aurora, sunset, ocean, night, candy, forest
-    case hearts, sakura, bubbles, meteor
+    case aurora, hearts   // 默认只保留 2 个主题，其余靠自定义背景图
     var id: String { rawValue }
 
     var label: String {
         switch self {
         case .aurora: return "极光"
-        case .sunset: return "落日"
-        case .ocean:  return "深海"
-        case .night:  return "星夜"
-        case .candy:  return "糖果"
-        case .forest: return "森林"
         case .hearts: return "爱心雨"
-        case .sakura: return "樱花雨"
-        case .bubbles:return "泡泡"
-        case .meteor: return "流星夜"
         }
     }
 
     var icon: String {
         switch self {
         case .aurora: return "🌌"
-        case .sunset: return "🌅"
-        case .ocean:  return "🌊"
-        case .night:  return "✨"
-        case .candy:  return "🍬"
-        case .forest: return "🌲"
         case .hearts: return "💖"
-        case .sakura: return "🌸"
-        case .bubbles:return "🫧"
-        case .meteor: return "🌠"
         }
     }
 
     /// 是否带动态粒子层
     var isDynamic: Bool {
         switch self {
-        case .night, .hearts, .sakura, .bubbles, .meteor: return true
+        case .hearts: return true
         default: return false
         }
     }
 
     init(safeRaw: String) {
+        // 旧数据里的 sunset/night 等主题已下线，回退到极光
         self = RoomBackground(rawValue: safeRaw) ?? .aurora
     }
 }

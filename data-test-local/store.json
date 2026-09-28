@@ -1,0 +1,431 @@
+{
+  "users": {
+    "userA_vmuls5nh0": {
+      "id": "userA_vmuls5nh0",
+      "name": "VIP房主",
+      "coins": 1000,
+      "charm": 0,
+      "vip": true,
+      "vipLevel": 12,
+      "createdAt": 1790632162868
+    },
+    "userB_vmuls5nh0": {
+      "id": "userB_vmuls5nh0",
+      "name": "普通用户",
+      "coins": 1000,
+      "charm": 0,
+      "vip": false,
+      "vipLevel": 0,
+      "createdAt": 1790632162870
+    },
+    "userC_vmuls5nh0": {
+      "id": "userC_vmuls5nh0",
+      "name": "挑战者",
+      "coins": 1000,
+      "charm": 0,
+      "vip": false,
+      "vipLevel": 0,
+      "createdAt": 1790632162870
+    },
+    "userA_vmuls6jdt": {
+      "id": "userA_vmuls6jdt",
+      "name": "VIP房主",
+      "coins": 1000,
+      "charm": 0,
+      "vip": true,
+      "vipLevel": 12,
+      "createdAt": 1790632204222
+    },
+    "userB_vmuls6jdt": {
+      "id": "userB_vmuls6jdt",
+      "name": "普通用户",
+      "coins": 1000,
+      "charm": 0,
+      "vip": false,
+      "vipLevel": 0,
+      "createdAt": 1790632204223
+    },
+    "userC_vmuls6jdt": {
+      "id": "userC_vmuls6jdt",
+      "name": "挑战者",
+      "coins": 1000,
+      "charm": 0,
+      "vip": false,
+      "vipLevel": 0,
+      "createdAt": 1790632204223
+    },
+    "userA_vmuls7b17": {
+      "id": "userA_vmuls7b17",
+      "name": "VIP房主",
+      "coins": 1000,
+      "charm": 0,
+      "vip": true,
+      "vipLevel": 12,
+      "createdAt": 1790632240053,
+      "recent": [
+        {
+          "libraryId": "m0b919dd8a57a",
+          "title": "测试歌V2",
+          "artist": "测试歌手",
+          "source": "",
+          "at": 1790632240878
+        }
+      ],
+      "favorites": []
+    },
+    "userB_vmuls7b17": {
+      "id": "userB_vmuls7b17",
+      "name": "普通用户",
+      "coins": 1000,
+      "charm": 0,
+      "vip": false,
+      "vipLevel": 0,
+      "createdAt": 1790632240054
+    },
+    "userC_vmuls7b17": {
+      "id": "userC_vmuls7b17",
+      "name": "挑战者",
+      "coins": 1000,
+      "charm": 0,
+      "vip": true,
+      "vipLevel": 3,
+      "createdAt": 1790632240054
+    },
+    "userA_vmuls7u01": {
+      "id": "userA_vmuls7u01",
+      "name": "VIP房主",
+      "coins": 1000,
+      "charm": 0,
+      "vip": true,
+      "vipLevel": 12,
+      "createdAt": 1790632264635,
+      "recent": [
+        {
+          "libraryId": "m3040e8b4c115",
+          "title": "测试歌V2",
+          "artist": "测试歌手",
+          "source": "",
+          "at": 1790632265440
+        }
+      ],
+      "favorites": []
+    },
+    "userB_vmuls7u01": {
+      "id": "userB_vmuls7u01",
+      "name": "普通用户",
+      "coins": 1000,
+      "charm": 0,
+      "vip": false,
+      "vipLevel": 0,
+      "createdAt": 1790632264635
+    },
+    "userC_vmuls7u01": {
+      "id": "userC_vmuls7u01",
+      "name": "挑战者",
+      "coins": 1000,
+      "charm": 0,
+      "vip": true,
+      "vipLevel": 3,
+      "createdAt": 1790632264636
+    },
+    "userA_umuls7wbx": {
+      "id": "userA_umuls7wbx",
+      "name": "房主A",
+      "coins": 1000,
+      "charm": 0,
+      "vip": false,
+      "vipLevel": 0,
+      "createdAt": 1790632267655
+    },
+    "userB_umuls7wbx": {
+      "id": "userB_umuls7wbx",
+      "name": "宾客B",
+      "coins": 1000,
+      "charm": 0,
+      "vip": false,
+      "vipLevel": 0,
+      "createdAt": 1790632267655
+    },
+    "userC_umuls7wbx": {
+      "id": "userC_umuls7wbx",
+      "name": "宾客C",
+      "coins": 1000,
+      "charm": 0,
+      "vip": false,
+      "vipLevel": 0,
+      "createdAt": 1790632267655
+    },
+    "userD_umuls7wbx": {
+      "id": "userD_umuls7wbx",
+      "name": "双开用户",
+      "coins": 1000,
+      "charm": 0,
+      "vip": false,
+      "vipLevel": 0,
+      "createdAt": 1790632269443
+    },
+    "mumuls7zsu": {
+      "id": "mumuls7zsu",
+      "name": "点播员",
+      "coins": 1000,
+      "charm": 0,
+      "vip": false,
+      "vipLevel": 0,
+      "createdAt": 1790632272135,
+      "recent": [
+        {
+          "libraryId": "gd|netease|509781655",
+          "title": "想你就写信 (Live)",
+          "artist": "周杰伦 / 李硕 / 张鑫",
+          "source": "netease",
+          "at": 1790632274249
+        },
+        {
+          "libraryId": "gd|netease|5257138",
+          "title": "屋顶",
+          "artist": "周杰伦 / 温岚 / 吴宗宪",
+          "source": "netease",
+          "at": 1790632273262
+        }
+      ]
+    },
+    "userA_vmuls87hw": {
+      "id": "userA_vmuls87hw",
+      "name": "VIP房主",
+      "coins": 1000,
+      "charm": 0,
+      "vip": true,
+      "vipLevel": 12,
+      "createdAt": 1790632282127,
+      "recent": [
+        {
+          "libraryId": "m78535b0a1671",
+          "title": "测试歌V2",
+          "artist": "测试歌手",
+          "source": "",
+          "at": 1790632282937
+        }
+      ],
+      "favorites": []
+    },
+    "userB_vmuls87hw": {
+      "id": "userB_vmuls87hw",
+      "name": "普通用户",
+      "coins": 1000,
+      "charm": 0,
+      "vip": false,
+      "vipLevel": 0,
+      "createdAt": 1790632282127
+    },
+    "userC_vmuls87hw": {
+      "id": "userC_vmuls87hw",
+      "name": "挑战者",
+      "coins": 1000,
+      "charm": 0,
+      "vip": true,
+      "vipLevel": 3,
+      "createdAt": 1790632282127
+    },
+    "userA_vmuls8t93": {
+      "id": "userA_vmuls8t93",
+      "name": "VIP房主",
+      "coins": 1000,
+      "charm": 0,
+      "vip": true,
+      "vipLevel": 12,
+      "createdAt": 1790632310325,
+      "recent": [
+        {
+          "libraryId": "mbb43d10902cc",
+          "title": "测试歌V2",
+          "artist": "测试歌手",
+          "source": "",
+          "at": 1790632311167
+        }
+      ],
+      "favorites": []
+    },
+    "userB_vmuls8t93": {
+      "id": "userB_vmuls8t93",
+      "name": "普通用户",
+      "coins": 1000,
+      "charm": 0,
+      "vip": false,
+      "vipLevel": 0,
+      "createdAt": 1790632310325
+    },
+    "userC_vmuls8t93": {
+      "id": "userC_vmuls8t93",
+      "name": "挑战者",
+      "coins": 1000,
+      "charm": 0,
+      "vip": true,
+      "vipLevel": 3,
+      "createdAt": 1790632310326
+    },
+    "userA_vmuls99p6": {
+      "id": "userA_vmuls99p6",
+      "name": "VIP房主",
+      "coins": 1000,
+      "charm": 0,
+      "vip": true,
+      "vipLevel": 12,
+      "createdAt": 1790632331635,
+      "recent": [
+        {
+          "libraryId": "m0d9e457c961f",
+          "title": "测试歌V2",
+          "artist": "测试歌手",
+          "source": "",
+          "at": 1790632332479
+        }
+      ],
+      "favorites": []
+    },
+    "userB_vmuls99p6": {
+      "id": "userB_vmuls99p6",
+      "name": "普通用户",
+      "coins": 1000,
+      "charm": 0,
+      "vip": false,
+      "vipLevel": 0,
+      "createdAt": 1790632331636
+    },
+    "userC_vmuls99p6": {
+      "id": "userC_vmuls99p6",
+      "name": "挑战者",
+      "coins": 1000,
+      "charm": 0,
+      "vip": true,
+      "vipLevel": 3,
+      "createdAt": 1790632331637
+    }
+  },
+  "rooms": {
+    "r5c02983b29": {
+      "id": "r5c02983b29",
+      "no": "V2TEST214",
+      "name": "测试房V2",
+      "background": "aurora",
+      "ownerId": "userA_vmuls5nh0",
+      "createdAt": 1790632162939
+    },
+    "r2fe40bc36a": {
+      "id": "r2fe40bc36a",
+      "no": "514477",
+      "name": "挑战者房",
+      "background": "aurora",
+      "ownerId": "userC_vmuls5nh0",
+      "createdAt": 1790632163088
+    },
+    "r6df7f6c13b": {
+      "id": "r6df7f6c13b",
+      "no": "V2TEST615",
+      "name": "测试房V2",
+      "background": "aurora",
+      "ownerId": "userA_vmuls6jdt",
+      "createdAt": 1790632204298
+    },
+    "r273a24b01d": {
+      "id": "r273a24b01d",
+      "no": "924519",
+      "name": "挑战者房",
+      "background": "aurora",
+      "ownerId": "userC_vmuls6jdt",
+      "createdAt": 1790632204488
+    },
+    "raed88e1550": {
+      "id": "raed88e1550",
+      "no": "V2TEST739",
+      "name": "测试房V2",
+      "background": "aurora",
+      "ownerId": "userA_vmuls8t93",
+      "createdAt": 1790632310403
+    },
+    "r8aa9508fba": {
+      "id": "r8aa9508fba",
+      "no": "758761",
+      "name": "挑战者房",
+      "background": "aurora",
+      "ownerId": "userC_vmuls8t93",
+      "createdAt": 1790632310613
+    }
+  },
+  "config": {
+    "adminPassword": "admin888",
+    "vips": [
+      "888888",
+      "666666",
+      "999999"
+    ],
+    "giftList": [
+      {
+        "id": "rose",
+        "name": "玫瑰",
+        "emoji": "🌹",
+        "price": 1,
+        "charm": 1
+      },
+      {
+        "id": "beer",
+        "name": "啤酒",
+        "emoji": "🍺",
+        "price": 5,
+        "charm": 5
+      },
+      {
+        "id": "cake",
+        "name": "蛋糕",
+        "emoji": "🎂",
+        "price": 20,
+        "charm": 20
+      },
+      {
+        "id": "star",
+        "name": "星星",
+        "emoji": "⭐",
+        "price": 50,
+        "charm": 50
+      },
+      {
+        "id": "rocket",
+        "name": "火箭",
+        "emoji": "🚀",
+        "price": 100,
+        "charm": 100
+      },
+      {
+        "id": "crown",
+        "name": "皇冠",
+        "emoji": "👑",
+        "price": 500,
+        "charm": 500
+      },
+      {
+        "id": "sport",
+        "name": "跑车",
+        "emoji": "🏎️",
+        "price": 1000,
+        "charm": 1000
+      },
+      {
+        "id": "castle",
+        "name": "城堡",
+        "emoji": "🏰",
+        "price": 5000,
+        "charm": 5000
+      }
+    ]
+  },
+  "library": [
+    {
+      "id": "mbb43d10902cc",
+      "title": "测试歌V2",
+      "artist": "测试歌手",
+      "file": "mbb43d10902cc.mp3",
+      "ext": "mp3",
+      "size": 2052,
+      "uploadedAt": 1790632311164
+    }
+  ]
+}

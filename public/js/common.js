@@ -148,18 +148,10 @@ const VR = (() => {
   }
 
   /* ---------- 房间背景 ---------- */
-  /* fx: 需要动态粒子层的主题（CSS 动画实现） */
+  /* fx: 需要动态粒子层的主题（CSS 动画实现）。默认只保留 2 个，更多靠自定义背景图 */
   const BACKGROUNDS = [
     { id: 'aurora',  name: '极光',   cls: 'bg-aurora',  icon: '🌌', fx: null },
-    { id: 'sunset',  name: '落日',   cls: 'bg-sunset',  icon: '🌅', fx: null },
-    { id: 'ocean',   name: '深海',   cls: 'bg-ocean',   icon: '🌊', fx: null },
-    { id: 'night',   name: '星夜',   cls: 'bg-night',   icon: '✨', fx: 'stars' },
-    { id: 'candy',   name: '糖果',   cls: 'bg-candy',   icon: '🍬', fx: null },
-    { id: 'forest',  name: '森林',   cls: 'bg-forest',  icon: '🌲', fx: null },
-    { id: 'hearts',  name: '爱心雨', cls: 'bg-hearts',  icon: '💖', fx: 'hearts' },
-    { id: 'sakura',  name: '樱花雨', cls: 'bg-sakura',  icon: '🌸', fx: 'sakura' },
-    { id: 'bubbles', name: '泡泡',   cls: 'bg-bubbles', icon: '🫧', fx: 'bubbles' },
-    { id: 'meteor',  name: '流星夜', cls: 'bg-meteor',  icon: '🌠', fx: 'meteor' }
+    { id: 'hearts',  name: '爱心雨', cls: 'bg-hearts',  icon: '💖', fx: 'hearts' }
   ];
   function findBg(id) {
     return BACKGROUNDS.find(b => b.id === id) || null;
@@ -204,6 +196,20 @@ const VR = (() => {
     body.appendChild(fxBox);
   }
 
+  /* ---------- VIP 等级徽章（1-12 级） ---------- */
+  function vipBadge(level, small) {
+    const lv = Math.max(0, Math.min(12, Number(level) || 0));
+    if (lv <= 0) return '';
+    const hue = 45 - (lv - 1) * 3; // 等级越高越偏金红
+    const bg = lv >= 10
+      ? 'linear-gradient(135deg,#FF3B5C,#FF8A3D)'
+      : lv >= 6
+        ? 'linear-gradient(135deg,#F5A623,#FFD36B)'
+        : 'linear-gradient(135deg,#7B6BFF,#4FC3F7)';
+    const cls = small ? 'badge vipsm' : 'badge';
+    return `<span class="${cls}" style="background:${bg}">💎V${lv}</span>`;
+  }
+
   /* ---------- 数字简写 ---------- */
   function shortNum(n) {
     n = Number(n) || 0;
@@ -231,5 +237,5 @@ const VR = (() => {
 
   return { LS, toast, esc, avatarHtml, genAvatar, avatarColor, hhmm, connect,
            openSheet, closeSheet, openModal, closeModal, fileToCompressedDataURL,
-           GENDER, genderIcon, BACKGROUNDS, bgClass, bgIcon, applyBackground, shortNum, haptic, copy };
+           GENDER, genderIcon, BACKGROUNDS, bgClass, bgIcon, applyBackground, shortNum, haptic, copy, vipBadge };
 })();

@@ -90,6 +90,20 @@ function parseGdLibraryId(libraryId) {
   return { source: parts[1], songId: parts[2] };
 }
 
+/* ---------- 个人音乐数据（收藏 / 最近播放，按 userId 持久化） ---------- */
+function pushRecent(userId, song) {
+  if (!userId || !song || !song.libraryId) return;
+  const u = store.users[userId];
+  if (!u) return;
+  u.recent = (u.recent || []).filter(x => x.libraryId !== song.libraryId);
+  u.recent.unshift({
+    libraryId: song.libraryId, title: song.title || '未知歌曲',
+    artist: song.artist || '', source: String(song.libraryId).split('|')[1] || '', at: Date.now()
+  });
+  if (u.recent.length > 30) u.recent.length = 30;
+  saveStore();
+}
+
 /* ================= 数据 ================= */
 const DEFAULT_CONFIG = {
   adminPassword: process.env.ADMIN_PASSWORD || 'admin888',
@@ -394,10 +408,14 @@ const server = http.createServer((req, res) => {
         const name = 'bg_' + crypto.randomBytes(6).toString('hex') + '.' + ext;
         fs.writeFileSync(path.join(DATA_DIR, 'bg', name), buf);
         const bgUrl = '/bg/' + name;
+        // 记忆到"我的背景"，下次可一键复用
+        u.myBgs = Array.isArray(u.myBgs) ? u.myBgs : [];
+        u.myBgs = [bgUrl].concat(u.myBgs.filter(x => x !== bgUrl)).slice(0, 8);
+        saveStore();
         // 自动应用到该用户的永久房间
         const room = Object.values(store.rooms).find(r => r.ownerId === userId);
         if (room) { room.background = bgUrl; saveStore(); pushSnapshot(room.id); }
-        send(res, 200, JSON.stringify({ ok: true, url: bgUrl }));
+        send(res, 200, JSON.stringify({ ok: true, url: bgUrl, myBgs: u.myBgs }));
       } catch (e) { send(res, 500, JSON.stringify({ ok: false, msg: '上传失败：' + e.message })); }
     }, 12e6);
   }
@@ -801,6 +819,57 @@ wss.on('connection', (ws) => {
         break;
       }
 
+      /* VIP 自定义房间号（永久保存，全服唯一） */
+      case 'room:set-no': {
+        const room = store.rooms[safeStr(msg.roomId, 40)];
+        if (!room) return reply({ type: 'error', msg: '房间不存在' });
+        if (room.ownerId !== msg.userId) return reply({ type: 'error', msg: '只有房主可以修改房间号' });
+        const u = store.users[msg.userId];
+        if (!u || !u.vip) return reply({ type: 'error', msg: '自定义房间号是 VIP 专属功能 💎' });
+        const no = safeStr(msg.no, 12).toUpperCase().replace(/[^0-9A-Z]/g, '');
+        if (no.length < 4 || no.length > 10) return reply({ type: 'error', msg: '房间号需为 4-10 位数字或字母' });
+        if (Object.values(store.rooms).some(r => r.id !== room.id && r.no === no))
+          return reply({ type: 'error', msg: '该房间号已被别人占用' });
+        room.no = no; saveStore(); pushSnapshot(room.id);
+        return reply({ type: 'room:no-ok', data: { no } });
+      }
+
+      /* 我的背景图（上传过的记录，下次一键复用） */
+      case 'user:mybgs': {
+        const u = store.users[safeStr(msg.userId, 40)];
+        return reply({ type: 'mybgs', data: { bgs: (u && Array.isArray(u.myBgs)) ? u.myBgs : [] } });
+      }
+
+      /* 收藏歌曲（按 userId 持久化） */
+      case 'music:fav': {
+        const rt = runtime.get(joinedRoom); if (!rt) return;
+        const me = rt.members.get(clientId); if (!me) return;
+        const u = store.users[me.userId]; if (!u) return;
+        const libId = String(msg.libraryId || '');
+        if (msg.action === 'add' && libId) {
+          u.favorites = (u.favorites || []).filter(x => x.libraryId !== libId);
+          u.favorites.unshift({
+            libraryId: libId, title: safeStr(msg.title, 60) || '未知歌曲',
+            artist: safeStr(msg.artist, 80), source: libId.split('|')[1] || '', at: Date.now()
+          });
+          if (u.favorites.length > 100) u.favorites.length = 100;
+        } else if (msg.action === 'remove' && libId) {
+          u.favorites = (u.favorites || []).filter(x => x.libraryId !== libId);
+        }
+        saveStore();
+        return reply({ type: 'music:favs', data: { favorites: u.favorites || [], recent: u.recent || [] } });
+      }
+
+      /* 查询收藏 + 最近播放 */
+      case 'music:favs': {
+        const rt = runtime.get(joinedRoom); if (!rt) return;
+        const me = rt.members.get(clientId); if (!me) return;
+        const u = store.users[me.userId];
+        return reply({ type: 'music:favs', data: {
+          favorites: (u && u.favorites) || [], recent: (u && u.recent) || []
+        }});
+      }
+
       case 'seat:change': {
         const rt = runtime.get(joinedRoom); if (!rt) return;
         const me = rt.members.get(clientId); if (!me) return;
@@ -832,7 +901,7 @@ wss.on('connection', (ws) => {
         const u = store.users[safeStr(msg.userId, 40)]; if (!u) return;
         const text = safeStr(msg.text, 200);
         if (!text) return;
-        const m = { id: uid('m'), userId: u.id, name: u.name, avatar: u.avatar, vip: u.vip, text, at: Date.now() };
+        const m = { id: uid('m'), userId: u.id, name: u.name, avatar: u.avatar, vip: u.vip, vipLevel: u.vipLevel, text, at: Date.now() };
         rt.chatLog.push(m); if (rt.chatLog.length > 200) rt.chatLog.shift();
         broadcast(joinedRoom, { type: 'chat', data: m });
         break;
@@ -919,6 +988,7 @@ wss.on('connection', (ws) => {
           await resolveSongUrl(song);
           rt.currentSong = song; rt.playing = true; rt.startedAt = Date.now();
         }
+        pushRecent((rt.members.get(clientId) || {}).userId, rt.currentSong);
         pushSnapshot(joinedRoom);
         break;
       }
@@ -953,6 +1023,7 @@ wss.on('connection', (ws) => {
         rt.currentSong = exist || song;
         rt.currentSong.url = song.url; // 重新解析，避免直链过期
         rt.playing = true; rt.startedAt = Date.now();
+        pushRecent((rt.members.get(clientId) || {}).userId, rt.currentSong);
         pushSnapshot(joinedRoom);
         break;
       }
@@ -967,10 +1038,11 @@ wss.on('connection', (ws) => {
           rt.currentSong = rt.playlist[(idx + 1) % rt.playlist.length];
           await resolveSongUrl(rt.currentSong); // 远端歌重取直链
           rt.playing = true; rt.startedAt = Date.now();
+          pushRecent((rt.members.get(clientId) || {}).userId, rt.currentSong);
         }
         if (a === 'select' && msg.songId) {
           const s = rt.playlist.find(x => x.id === msg.songId);
-          if (s) { await resolveSongUrl(s); rt.currentSong = s; rt.playing = true; rt.startedAt = Date.now(); }
+          if (s) { await resolveSongUrl(s); rt.currentSong = s; rt.playing = true; rt.startedAt = Date.now(); pushRecent((rt.members.get(clientId) || {}).userId, s); }
         }
         if (a === 'remove' && msg.songId) {
           rt.playlist = rt.playlist.filter(x => x.id !== msg.songId);

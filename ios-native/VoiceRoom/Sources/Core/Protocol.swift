@@ -72,6 +72,8 @@ enum VRClientMessage {
     /// 立即点播：替换当前歌曲
     case musicPlayNow(libraryId: String, by: String, title: String?, artist: String?)
     case musicControl(action: String, songId: String?)
+    /// VIP 自定义房间号（4-10 位数字或字母，全服唯一，永久保存）
+    case roomSetNo(roomId: String, userId: String, no: String)
     // WebRTC 信令
     case rtcOffer(to: String, sdp: String)
     case rtcAnswer(to: String, sdp: String)
@@ -156,6 +158,9 @@ enum VRClientMessage {
             if let songId { p["songId"] = songId }
             return p
 
+        case let .roomSetNo(roomId, userId, no):
+            return ["type": "room:set-no", "roomId": roomId, "userId": userId, "no": no]
+
         case let .rtcOffer(to, sdp):
             return ["type": "rtc:offer", "to": to, "data": ["type": "offer", "sdp": sdp]]
 
@@ -197,6 +202,7 @@ enum VRServerMessage {
     case rtcAnswer(from: String, sdp: String)
     case rtcIce(from: String, candidate: [String: Any])
     case rtcBye(from: String)
+    case roomNoOK(no: String)
     case error(String)
     case unknown(String)
 
@@ -309,6 +315,10 @@ enum VRServerMessage {
         case "rtc:bye":
             let from = json["from"] as? String ?? ""
             return .rtcBye(from: from)
+
+        case "room:no-ok":
+            let no = (data?["no"] as? String) ?? ""
+            return .roomNoOK(no: no)
 
         case "error":
             return .error(json["msg"] as? String ?? "操作失败")

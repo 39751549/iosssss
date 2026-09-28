@@ -12,8 +12,10 @@ struct RoomSettingsSheet: View {
     @State private var roomName = ""
     @State private var background: RoomBackground = .aurora
     @State private var showDestroyConfirm = false
+    @State private var customNo = ""
 
     private var isHost: Bool { app.isHost }
+    private var isVip: Bool { app.me?.vip == true }
 
     var body: some View {
         ZStack {
@@ -57,6 +59,38 @@ struct RoomSettingsSheet: View {
                             )
                         }
                         .buttonStyle(.plain)
+                    }
+
+                    // 自定义房间号（VIP 房主专属）
+                    if isHost && isVip {
+                        VStack(alignment: .leading, spacing: 7) {
+                            HStack(spacing: 6) {
+                                Text("自定义房间号")
+                                    .font(.system(size: 12.5, weight: .semibold))
+                                    .foregroundColor(VRTheme.textDim)
+                                Text("💎 VIP 专属")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundColor(VRTheme.gold)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Capsule().fill(VRTheme.gold.opacity(0.14)))
+                            }
+                            HStack(spacing: 9) {
+                                VRTextField(placeholder: "4-10 位数字或字母", text: $customNo, maxLength: 10)
+                                Button("改号") {
+                                    let v = customNo.trimmingCharacters(in: .whitespaces).uppercased()
+                                    guard !v.isEmpty else {
+                                        app.showToast("请输入新房间号", kind: .error)
+                                        return
+                                    }
+                                    app.setRoomNo(v)
+                                }
+                                .buttonStyle(VRButtonStyle(kind: .primary))
+                            }
+                            Text("改完立即生效并永久保存，好友用新房间号就能进房。")
+                                .font(.system(size: 11))
+                                .foregroundColor(VRTheme.textMute)
+                        }
                     }
 
                     // 房间名

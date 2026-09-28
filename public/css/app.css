@@ -724,3 +724,32 @@ input, textarea { outline: none; }
   .sheet { max-width: 460px; left: 50%; transform: translate(-50%, 102%); }
   .sheet.show { transform: translate(-50%, 0); }
 }
+
+/* ---------- 音乐面板标签页（搜索/歌单/收藏/最近） ---------- */
+.music-tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+.mtab {
+  flex: 1; padding: 9px 0; border-radius: 12px; font-size: 13px; font-weight: 700;
+  color: var(--text-dim); background: rgba(255,255,255,.06); border: 1px solid var(--border);
+  transition: all .15s; white-space: nowrap;
+}
+.mtab.sel {
+  color: #fff; background: linear-gradient(135deg, var(--brand), #4FC3F7);
+  border-color: transparent; box-shadow: 0 4px 14px rgba(123,107,255,.35);
+}
+.mtab-pane { min-height: 100px; }
+.fav-btn { padding: 8px 10px !important; font-size: 13px; }
+.fav-btn.faved { border-color: rgba(255,92,108,.65); background: rgba(255,92,108,.12); }
+
+/* ---------- 我的背景缩略图 ---------- */
+.mybgs { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; }
+.mybg-thumb {
+  width: 92px; height: 58px; object-fit: cover; border-radius: 10px;
+  border: 2px solid transparent; flex: none; cursor: pointer; background: rgba(255,255,255,.06);
+}
+.mybg-thumb.sel { border-color: var(--gold); box-shadow: 0 0 10px rgba(255,199,89,.35); }
+
+/* ---------- VIP 等级徽章（1-12 级，越小越淡） ---------- */
+.badge.vipsm { font-size: 9px; padding: 1px 6px; border: none; }
+
+/* 悬浮音乐球确保不被遮挡 */
+.fab-music { z-index: 60; }

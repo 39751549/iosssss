@@ -217,6 +217,9 @@ final class AppState: ObservableObject {
                 roomState = st
             }
 
+        case let .roomNoOK(no):
+            showToast("房间号已改为 \(no)", kind: .success)
+
         case let .error(msg):
             showToast(msg, kind: .error)
 
@@ -321,6 +324,12 @@ final class AppState: ObservableObject {
     func renameRoom(_ name: String) {
         guard let st = roomState else { return }
         connection.send(.roomRename(roomId: st.room.id, userId: userId, name: name))
+    }
+
+    /// VIP 自定义房间号（永久保存）
+    func setRoomNo(_ no: String) {
+        guard let st = roomState else { return }
+        connection.send(.roomSetNo(roomId: st.room.id, userId: userId, no: no))
     }
 
     func setRoomBackground(_ bg: RoomBackground) {

@@ -323,7 +323,7 @@ function renderLobby() {
   document.getElementById('lobbyCard').style.display = '';
 
   document.getElementById('myAvatar').innerHTML = VR.avatarHtml(ME, 56);
-  const vipBadge = ME.vip ? ' <span class="badge">👑 VIP' + (ME.vipLevel || 1) + '</span>' : '';
+  const vipBadge = ME.vip ? ' ' + VR.vipBadge(ME.vipLevel) : '';
   document.getElementById('myName').innerHTML = VR.esc(ME.name) + vipBadge;
   const g = VR.GENDER[ME.gender] || VR.GENDER.secret;
   document.getElementById('myMeta').innerHTML = `${VR.genderIcon(ME.gender)} ${g.label} · ID ${VR.esc(String(ME.id).slice(-6).toUpperCase())}`;
