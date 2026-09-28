@@ -1,5 +1,4 @@
 import SwiftUI
-import PhotosUI
 
 /// 编辑名片弹层
 struct ProfileEditSheet: View {
@@ -11,8 +10,8 @@ struct ProfileEditSheet: View {
     @State private var bio = ""
     @State private var avatar: String = ""
 
-    // 相册选择
-    @State private var pickedItem: PhotosPickerItem?
+    // 相册选择（VRPhotoPicker：iOS 15 兼容）
+    @State private var showPhotoPicker = false
     @State private var previewImage: UIImage?
     @State private var isProcessing = false
 
@@ -45,7 +44,9 @@ struct ProfileEditSheet: View {
                         .shadow(color: .black.opacity(0.35), radius: 10, y: 4)
 
                         VStack(alignment: .leading, spacing: 9) {
-                            PhotosPicker(selection: $pickedItem, matching: .images) {
+                            Button {
+                                showPhotoPicker = true
+                            } label: {
                                 Label("从相册选择", systemImage: "photo")
                                     .font(.system(size: 13, weight: .semibold))
                                     .foregroundColor(VRTheme.text)
@@ -60,6 +61,7 @@ struct ProfileEditSheet: View {
                                             .strokeBorder(VRTheme.border, lineWidth: 1)
                                     )
                             }
+                            .buttonStyle(.plain)
 
                             Button {
                                 randomAvatar()
@@ -116,12 +118,12 @@ struct ProfileEditSheet: View {
                 .padding(20)
             }
         }
-        .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
+        .vrSheet()
         .onAppear(perform: loadCurrent)
-        .onChange(of: pickedItem) { item in
-            guard let item else { return }
-            Task { await handlePicked(item) }
+        .sheet(isPresented: $showPhotoPicker) {
+            VRPhotoPicker { img in
+                handlePicked(img)
+            }
         }
         .onChange(of: name) { _ in
             // 昵称变了，若用的是生成头像则同步刷新
@@ -158,15 +160,9 @@ struct ProfileEditSheet: View {
     }
 
     /// 处理相册选图：压缩成 256px 的 JPEG dataURL
-    private func handlePicked(_ item: PhotosPickerItem) async {
+    private func handlePicked(_ image: UIImage) {
         isProcessing = true
         defer { isProcessing = false }
-
-        guard let data = try? await item.loadTransferable(type: Data.self),
-              let image = UIImage(data: data) else {
-            app.showToast("图片读取失败", kind: .error)
-            return
-        }
 
         let resized = image.resized(maxSide: 256)
         guard let jpeg = resized.jpegData(compressionQuality: 0.82) else {

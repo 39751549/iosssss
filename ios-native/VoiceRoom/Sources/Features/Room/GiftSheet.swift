@@ -91,11 +91,10 @@ struct GiftSheet: View {
                     .padding(.horizontal, 20)
                     .padding(.bottom, 24)
                 }
-                .scrollIndicators(.hidden)
+                .vrScrollHidden()
             }
         }
-        .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
+        .vrSheet()
         .onAppear(perform: setup)
     }
 

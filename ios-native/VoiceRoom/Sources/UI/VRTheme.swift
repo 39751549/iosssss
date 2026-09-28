@@ -47,24 +47,8 @@ enum VRTheme {
         switch RoomBackground(safeRaw: id) {
         case .aurora:
             return [Color(hex: "3B2E8F"), Color(hex: "171B45"), Color(hex: "080B1A")]
-        case .sunset:
-            return [Color(hex: "2B1055"), Color(hex: "6B2D5C"), Color(hex: "C2456B"), Color(hex: "FF8A5B")]
-        case .ocean:
-            return [Color(hex: "04304F"), Color(hex: "0A5E7A"), Color(hex: "12A0A0")]
-        case .night:
-            return [Color(hex: "05070F"), Color(hex: "101736"), Color(hex: "1B2450")]
-        case .candy:
-            return [Color(hex: "FF9AC4"), Color(hex: "C77DFF"), Color(hex: "7B6BFF")]
-        case .forest:
-            return [Color(hex: "06281F"), Color(hex: "0C4A38"), Color(hex: "1E7A5A")]
         case .hearts:
             return [Color(hex: "3D1140"), Color(hex: "7A1E52"), Color(hex: "C2456B")]
-        case .sakura:
-            return [Color(hex: "4A2C5E"), Color(hex: "9C5B8B"), Color(hex: "E8A0BF")]
-        case .bubbles:
-            return [Color(hex: "0B3D6B"), Color(hex: "1266A8"), Color(hex: "35B5D8")]
-        case .meteor:
-            return [Color(hex: "04060F"), Color(hex: "0D1533"), Color(hex: "1C2B5E")]
         }
     }
 
@@ -73,24 +57,8 @@ enum VRTheme {
         switch RoomBackground(safeRaw: id) {
         case .aurora:
             return [brand.opacity(0.55), brand2.opacity(0.42), pink.opacity(0.35)]
-        case .sunset:
-            return [Color(hex: "FFC878").opacity(0.42)]
-        case .ocean:
-            return [Color(hex: "78FFF0").opacity(0.28)]
-        case .night:
-            return [brand.opacity(0.22)]
-        case .candy:
-            return [Color.white.opacity(0.32)]
-        case .forest:
-            return [Color(hex: "8CFFC8").opacity(0.22)]
         case .hearts:
             return [pink.opacity(0.4), gold.opacity(0.18)]
-        case .sakura:
-            return [Color(hex: "FFB8D9").opacity(0.35)]
-        case .bubbles:
-            return [Color(hex: "9FE8FF").opacity(0.3)]
-        case .meteor:
-            return [brand2.opacity(0.2)]
         }
     }
 

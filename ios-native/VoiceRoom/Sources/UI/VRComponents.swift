@@ -385,7 +385,7 @@ struct VRSheet<Content: View>: View {
                         .padding(.horizontal, 20)
                         .padding(.bottom, 20)
                 }
-                .scrollIndicators(.hidden)
+                .vrScrollHidden()
             }
             .frame(maxHeight: UIScreen.main.bounds.height * 0.84)
             .background(
@@ -395,7 +395,7 @@ struct VRSheet<Content: View>: View {
             )
             .overlay(
                 RoundedCorner(radius: 22, corners: [.topLeft, .topRight])
-                    .strokeBorder(VRTheme.border, lineWidth: 1)
+                    .stroke(VRTheme.border, lineWidth: 1)
                     .ignoresSafeArea(edges: .bottom)
             )
         }
@@ -455,5 +455,97 @@ struct VRSegmentedControl<T: Hashable>: View {
             RoundedRectangle(cornerRadius: 13, style: .continuous)
                 .strokeBorder(VRTheme.border, lineWidth: 1)
         )
+    }
+}
+
+
+// MARK: - iOS 15/16 兼容助手
+//
+// 部署目标是 iOS 15，但部分代码用了 iOS 16 的 API。
+// 这里统一封装：16+ 走新 API，15 静默降级为可用效果。
+
+extension View {
+    /// ScrollView 隐藏滚动条（iOS 15：保持默认，仅外观差异）
+    @ViewBuilder
+    func vrScrollHidden() -> some View {
+        if #available(iOS 16.0, *) {
+            self.scrollIndicators(.hidden)
+        } else {
+            self
+        }
+    }
+
+    /// 滚动即收起键盘（iOS 15：无等效 API，键盘由工具栏/点击收起）
+    @ViewBuilder
+    func vrScrollDismissKeyboard() -> some View {
+        if #available(iOS 16.0, *) {
+            self.scrollDismissesKeyboard(.interactively)
+        } else {
+            self
+        }
+    }
+
+    /// 半屏/全屏 sheet + 拖动条（iOS 15：普通全屏 sheet）
+    @ViewBuilder
+    func vrSheet(medium: Bool = false, large: Bool = true) -> some View {
+        if #available(iOS 16.0, *) {
+            self.presentationDetents(Self.vrDetents(medium: medium, large: large))
+                .presentationDragIndicator(.visible)
+        } else {
+            self
+        }
+    }
+
+    @available(iOS 16.0, *)
+    private static func vrDetents(medium: Bool, large: Bool) -> Set<PresentationDetent> {
+        var s = Set<PresentationDetent>()
+        if medium { s.insert(.medium) }
+        if large { s.insert(.large) }
+        return s
+    }
+
+    /// NavigationStack 的 iOS 15 替代（NavigationView + stack 风格）
+    @ViewBuilder
+    func vrNavigationStack<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        if #available(iOS 16.0, *) {
+            NavigationStack(root: content)
+        } else {
+            NavigationView(content: content).navigationViewStyle(.stack)
+        }
+    }
+}
+
+// MARK: - 相册选图（iOS 15 可用；PhotosPicker 需要 iOS 16）
+
+struct VRPhotoPicker: UIViewControllerRepresentable {
+    var onPicked: (UIImage) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let c = UIImagePickerController()
+        c.sourceType = .photoLibrary
+        c.delegate = context.coordinator
+        return c
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let parent: VRPhotoPicker
+        init(_ parent: VRPhotoPicker) { self.parent = parent }
+
+        func imagePickerController(_ picker: UIImagePickerController,
+                                   didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            if let img = info[.originalImage] as? UIImage {
+                parent.onPicked(img)
+            }
+            parent.dismiss()
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            parent.dismiss()
+        }
     }
 }

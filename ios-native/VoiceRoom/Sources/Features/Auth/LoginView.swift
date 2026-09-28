@@ -128,7 +128,7 @@ struct LoginView: View {
                     .padding(.bottom, 40)
                 }
             }
-            .scrollDismissesKeyboard(.interactively)
+            .vrScrollDismissKeyboard()
         }
         .sheet(isPresented: $showServerSheet) {
             ServerSettingsView()
@@ -163,7 +163,7 @@ struct ServerSettingsView: View {
     @State private var useTLS = true
 
     var body: some View {
-        NavigationStack {
+        vrNavigationStack {
             ZStack {
                 VRTheme.bg.ignoresSafeArea()
                 ScrollView {

@@ -61,8 +61,7 @@ struct CreateRoomSheet: View {
                 .padding(20)
             }
         }
-        .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
+        .vrSheet()
         .onAppear {
             if roomName.isEmpty {
                 roomName = "\(app.me?.name ?? "我") 的房间"
@@ -175,7 +174,6 @@ struct VipSheet: View {
             }
             .padding(20)
         }
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
+        .vrSheet(medium: true, large: true)
     }
 }

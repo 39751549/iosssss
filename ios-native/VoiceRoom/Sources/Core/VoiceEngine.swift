@@ -97,12 +97,9 @@ final class VoiceEngine: NSObject {
     private func startLocalAudio() {
         guard localStream == nil, let factory else { return }
 
+        // AEC/NS/AGC 由 WebRTC 音频处理默认开启，无需显式约束键
         let constraints = RTCMediaConstraints(
-            mandatoryConstraints: [
-                kRTCMediaConstraintsEchoCancellation: kRTCMediaConstraintsValueTrue,
-                kRTCMediaConstraintsNoiseSuppression: kRTCMediaConstraintsValueTrue,
-                kRTCMediaConstraintsAutoGainControl: kRTCMediaConstraintsValueTrue
-            ],
+            mandatoryConstraints: nil,
             optionalConstraints: nil
         )
         let source = factory.audioSource(with: constraints)
@@ -283,7 +280,6 @@ final class VoiceEngine: NSObject {
         isMicOn = false
         speakingIds.removeAll()
         onSpeakingChanged?([])
-        RTCStopSSL()
         factory = nil
     }
 

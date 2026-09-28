@@ -220,6 +220,18 @@ final class AppState: ObservableObject {
         case let .roomNoOK(no):
             showToast("房间号已改为 \(no)", kind: .success)
 
+        case let .rtcOffer(from, sdp):
+            voice.handleOffer(from: from, sdp: sdp)
+
+        case let .rtcAnswer(from, sdp):
+            voice.handleAnswer(from: from, sdp: sdp)
+
+        case let .rtcIce(from, candidate):
+            voice.handleIce(from: from, candidate: candidate)
+
+        case let .rtcBye(from):
+            voice.closePeer(from)
+
         case let .error(msg):
             showToast(msg, kind: .error)
 

@@ -111,11 +111,11 @@ final class VRConnection: ObservableObject {
     private func startPing() {
         stopPing()
         pingTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.task?.sendPing { err in
-                    if err != nil {
-                        Task { @MainActor in self?.handleFailure("心跳失败") }
-                    }
+            guard let self = self else { return }
+            self.task?.sendPing { [weak self] err in
+                guard let self = self, err != nil else { return }
+                Task { @MainActor in
+                    self.handleFailure("心跳失败")
                 }
             }
         }

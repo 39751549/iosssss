@@ -64,11 +64,10 @@ struct MemberSheet: View {
                     .padding(.horizontal, 20)
                     .padding(.bottom, 24)
                 }
-                .scrollIndicators(.hidden)
+                .vrScrollHidden()
             }
         }
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
+        .vrSheet(medium: true, large: true)
         .sheet(item: $giftTarget) { m in
             GiftSheet(state: state, presetTarget: m.clientId).environmentObject(app)
         }
@@ -266,11 +265,10 @@ struct UserCardSheet: View {
                         .padding(.bottom, 30)
                     }
                 }
-                .scrollIndicators(.hidden)
+                .vrScrollHidden()
             }
         }
-        .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
+        .vrSheet()
         .sheet(isPresented: $showGift) {
             GiftSheet(state: state, presetTarget: member.clientId).environmentObject(app)
         }

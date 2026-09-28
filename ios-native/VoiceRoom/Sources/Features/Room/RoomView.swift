@@ -244,7 +244,7 @@ struct RoomView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
             }
-            .scrollIndicators(.hidden)
+            .vrScrollHidden()
             .onChange(of: app.messages.count) { _ in
                 if let last = app.messages.last {
                     withAnimation(.easeOut(duration: 0.2)) {

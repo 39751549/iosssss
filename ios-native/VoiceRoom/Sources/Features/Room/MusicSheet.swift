@@ -60,12 +60,11 @@ struct MusicSheet: View {
                     .padding(.top, 14)
                     .padding(.bottom, 26)
                 }
-                .scrollIndicators(.hidden)
-                .scrollDismissesKeyboard(.interactively)
+                .vrScrollHidden()
+                .vrScrollDismissKeyboard()
             }
         }
-        .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
+        .vrSheet()
         .onAppear {
             cache.refreshStats()
             if results.isEmpty { runSearch("") }

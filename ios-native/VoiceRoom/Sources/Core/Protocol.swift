@@ -13,14 +13,16 @@ enum VRConfig {
     static let useTLS = false
 
     static var baseURL: URL? {
-        guard let host = ServerStore.shared.host else { return nil }
         let scheme = ServerStore.shared.useTLS ? "https" : "http"
+        let host = ServerStore.shared.host
+        guard !host.isEmpty else { return nil }
         return URL(string: "\(scheme)://\(host)")
     }
 
     static var wsURL: URL? {
-        guard let host = ServerStore.shared.host else { return nil }
         let scheme = ServerStore.shared.useTLS ? "wss" : "ws"
+        let host = ServerStore.shared.host
+        guard !host.isEmpty else { return nil }
         return URL(string: "\(scheme)://\(host)")
     }
 }

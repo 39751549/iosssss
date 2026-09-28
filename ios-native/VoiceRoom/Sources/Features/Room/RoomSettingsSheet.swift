@@ -182,7 +182,7 @@ struct RoomSettingsSheet: View {
                 }
                 .padding(20)
             }
-            .scrollIndicators(.hidden)
+            .vrScrollHidden()
         }
         .confirmationDialog("解散后房间将永久删除，房间里的所有人都会被请出。确定吗？",
                             isPresented: $showDestroyConfirm, titleVisibility: .visible) {
@@ -192,8 +192,7 @@ struct RoomSettingsSheet: View {
             }
             Button("取消", role: .cancel) {}
         }
-        .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
+        .vrSheet()
         .onAppear {
             roomName = state.room.name
             background = RoomBackground(safeRaw: state.room.background)
