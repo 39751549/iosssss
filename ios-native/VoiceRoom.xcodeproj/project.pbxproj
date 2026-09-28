@@ -82,14 +82,22 @@
 		A1000005000000000000002 /* VoiceRoom */ = {
 			isa = PBXGroup;
 			children = (
+				A100000500000000000000E /* Sources */,
+				A1000005000000000000008 /* Resources */,
+			);
+			path = VoiceRoom;
+			sourceTree = "<group>";
+		};
+		A100000500000000000000E /* Sources */ = {
+			isa = PBXGroup;
+			children = (
 				A1000005000000000000003 /* App */,
 				A1000005000000000000004 /* Models */,
 				A1000005000000000000005 /* Core */,
 				A1000005000000000000006 /* UI */,
 				A1000005000000000000007 /* Features */,
-				A1000005000000000000008 /* Resources */,
 			);
-			path = VoiceRoom;
+			path = Sources;
 			sourceTree = "<group>";
 		};
 		A1000005000000000000003 /* App */ = {
