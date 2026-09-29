@@ -21,7 +21,8 @@ final class VRConnection: ObservableObject {
     private var reconnectAttempt = 0
     private var shouldReconnect = true
     private var pingTimer: Timer?
-    private var reconnectWork: DispatchWorkItem?
+    /// 待触发的重连（可取消：回前台时可立刻取消它，避免和 reconnectNow 各建一条连接）
+    private var reconnectTask: Task<Void, Never>?
 
     // MARK: - 连接
 
@@ -79,8 +80,8 @@ final class VRConnection: ObservableObject {
     /// 拆掉当前连接（只做清理，不改 shouldReconnect）。重连、重开都先走这里。
     private func teardownCurrent() {
         stopPing()
-        reconnectWork?.cancel()
-        reconnectWork = nil
+        reconnectTask?.cancel()
+        reconnectTask = nil
         task?.cancel(with: .goingAway, reason: nil)
         task = nil
         session?.invalidateAndCancel()
@@ -121,12 +122,14 @@ final class VRConnection: ObservableObject {
         guard let data = try? JSONSerialization.data(withJSONObject: message.payload) else { return }
         guard let text = String(data: data, encoding: .utf8) else { return }
         t.send(.string(text)) { [weak self] err in
-            if let err {
-                Task { @MainActor in
-                    // 失败回调也要确认是自己的连接，旧连接的报错不该触发当前连接的重连
-                    guard let self, self.task === t else { return }
-                    self.handleFailure(err.localizedDescription)
-                }
+            // 先固化弱引用再进 Task：把 weak self 直接带进并发闭包 Swift 会报
+            // "reference to captured var 'self' in concurrently-executing code"
+            guard let self = self, let err = err else { return }
+            let reason = err.localizedDescription
+            Task { @MainActor in
+                // 失败回调也要确认是自己的连接，旧连接的报错不该触发当前连接的重连
+                guard self.task === t else { return }
+                self.handleFailure(reason)
             }
         }
     }
@@ -206,16 +209,14 @@ final class VRConnection: ObservableObject {
         reconnectAttempt += 1
         // 1s, 2s, 4s, 8s… 最多 15s
         let delay = min(pow(2.0, Double(reconnectAttempt - 1)), 15)
-        reconnectWork?.cancel()
-        // 用可取消的 work item：回前台时 reconnectNow() 能取消这个待触发的重连，避免两条连接打架
-        let work = DispatchWorkItem { [weak self] in
-            Task { @MainActor in
-                guard let self, self.shouldReconnect else { return }
-                self.connect()
-            }
+        // 存成 Task 便于取消：回前台时 reconnectNow() 会取消这个待触发的重连，
+        // 否则退避重连和前台重连会同时建两条连接。
+        reconnectTask?.cancel()
+        reconnectTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled, let self, self.shouldReconnect else { return }
+            self.connect()
         }
-        reconnectWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     var isConnected: Bool { status == .connected }
