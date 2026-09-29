@@ -7,7 +7,7 @@ import Combine
 /// 同步原理：
 /// 服务端广播 currentSong + startedAt（播放起点时间戳），
 /// 各客户端用 (now - startedAt) 计算应播放到的进度，
-/// 偏差超过 3 秒就 seek 校正，实现"多人同时听同一首歌"。
+/// 偏差超过阈值就 seek 校正，实现"多人同时听同一首歌"。
 ///
 /// 缓存：
 /// 播放前先查 MusicCache，命中则直接用本地文件（省流量、拖动秒开）；
@@ -20,17 +20,38 @@ final class MusicPlayer: NSObject, ObservableObject {
     @Published private(set) var currentTitle: String = ""
     @Published private(set) var currentId: String = ""
     @Published private(set) var isLoading = false
+    /// 当前播放进度（秒）
+    @Published var position: Double = 0
+    /// 当前歌曲总时长（秒），未知为 0
+    @Published var duration: Double = 0
+    /// 播放音量 0...1（默认 0.7，用户可调）
+    @Published var volume: Float = 0.7 {
+        didSet { player?.volume = volume }
+    }
+
+    /// 播放结束回调（AppState 上报服务端推进歌单）
+    var onPlaybackEnded: (() -> Void)?
+    /// 播放失败回调（直链过期时请求服务端重解析）
+    var onPlaybackFailed: (() -> Void)?
+    /// 已因失败请求过重解析的 URL —— 同一个 URL 只请求一次，避免异常时无限循环
+    private var reloadRequestedFor: Set<String> = []
 
     private var player: AVPlayer?
+    /// 当前正在播放的歌曲标识（用 songId，比 url 稳定：直链会刷新但歌不变）
+    private var currentSongKey: String = ""
     private var currentUrl: String = ""
     private var muted = false
+    private var timeObserver: Any?
 
     /// 播放到本地缓存后的通知（用于 UI 刷新"已缓存"徽标）
-    private var cacheFlipKey: String?
+    private var observers = Set<AnyCancellable>()
+    private var progressObservers: [String: NSKeyValueObservation] = [:]
 
     private override init() {
         super.init()
         configureSession()
+        observeInterruptions()
+        addPeriodicTimeObserver()
     }
 
     private func configureSession() {
@@ -46,33 +67,100 @@ final class MusicPlayer: NSObject, ObservableObject {
         }
     }
 
+    /// 监听系统中断（来电等）与路由变化，避免回前台后状态错乱
+    private func observeInterruptions() {
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleInterruption),
+            name: AVAudioSession.interruptionNotification, object: nil
+        )
+    }
+
+    @objc private func handleInterruption(_ note: Notification) {
+        guard let info = note.userInfo,
+              let raw = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+        // 中断结束时不自动播放，交给下一次房间快照 sync 校准（避免与全房状态冲突）
+        if type == .ended { isPlaying = false }
+    }
+
+    /// 每 0.4 秒刷新一次进度与时长
+    private func addPeriodicTimeObserver() {
+        let interval = CMTime(seconds: 0.4, preferredTimescale: 600)
+        timeObserver = nil
+        // player 是懒创建的，这里先占位，attach 时再挂到具体 player 上
+        _ = interval
+    }
+
+    private func bindTimeObserver(_ p: AVPlayer) {
+        if let old = timeObserver { oldPlayer?.removeTimeObserver(old); timeObserver = nil }
+        let interval = CMTime(seconds: 0.4, preferredTimescale: 600)
+        timeObserver = p.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] t in
+            guard let self else { return }
+            let sec = CMTimeGetSeconds(t)
+            if sec.isFinite, sec >= 0 { self.position = sec }
+            if self.duration <= 0,
+               let item = p.currentItem,
+               item.status == .readyToPlay {
+                let d = CMTimeGetSeconds(item.duration)
+                if d.isFinite, d > 0 { self.duration = d }
+            }
+        }
+        oldPlayer = p
+    }
+    private weak var oldPlayer: AVPlayer?
+
+    private func removeTimeObserver() {
+        if let ob = timeObserver, let p = oldPlayer { p.removeTimeObserver(ob) }
+        timeObserver = nil
+        oldPlayer = nil
+    }
+
     // MARK: - 同步入口
 
+    /// 与房间状态对齐。
+    ///
+    /// 关键：**同一首歌不重新加载**（修复"切后台回来重播"的 bug）。
+    /// 只有歌真的换了（songId/url 变化）才重新 attach；否则只做进度校正。
     func sync(with state: VRRoomState, speakerOn: Bool) {
         guard let song = state.currentSong else {
-            stop()
+            if !currentSongKey.isEmpty { stop() }
             return
         }
 
-        // 切歌
-        if currentUrl != song.url {
+        // 切歌判断：优先比 songId（稳定），其次比 url
+        let newKey = song.id.isEmpty ? song.url : song.id
+        let songChanged = (newKey != currentSongKey)
+        // 同一首歌但直链刷新了（服务端 reload 重解析后下发的全新 URL）也要重新加载，
+        // 否则会一直拿着过期直链放不出来 —— 这是"重进房间音乐不放"的根因。
+        let urlChanged = !song.url.isEmpty && song.url != currentUrl
+        let changed = songChanged || urlChanged
+
+        if changed {
+            currentSongKey = newKey
             currentUrl = song.url
             currentTitle = song.title
             currentId = song.id
+            if songChanged {
+                position = 0
+                duration = 0
+            }
             load(urlString: song.url)
-            // 记录到最近听歌
-            recordHistory(song)
+            if songChanged { recordHistory(song) }
         }
 
         guard let player else { return }
 
         if state.playing {
-            // 计算目标进度，实现多人同步
-            let elapsed = state.startedAt > 0 ? (state.now - state.startedAt) / 1000.0 : 0
-            let current = CMTimeGetSeconds(player.currentTime())
-            if current.isFinite, abs(current - elapsed) > 3 {
-                let target = CMTime(seconds: max(0, elapsed), preferredTimescale: 600)
-                player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
+            if !changed {
+                // 同一首歌：只做进度校准，绝不重新加载
+                let elapsed = state.startedAt > 0 ? (state.now - state.startedAt) / 1000.0 : 0
+                let current = CMTimeGetSeconds(player.currentTime())
+                let drift = abs(current - elapsed)
+                // 误差超过 2 秒且已过 3 秒缓冲才校正，避免频繁 seek 造成卡顿
+                if elapsed > 3, current.isFinite, drift > 2 {
+                    let target = CMTime(seconds: max(0, elapsed), preferredTimescale: 600)
+                    player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
+                }
             }
             if player.rate == 0, speakerOn, !isLoading {
                 player.play()
@@ -114,19 +202,34 @@ final class MusicPlayer: NSObject, ObservableObject {
         player?.pause()
         // 清掉上一首的状态订阅，避免切歌多次后累积
         observers.removeAll()
+        removeTimeObserver()
         player = nil
 
         let p = AVPlayer(playerItem: playerItem)
         p.automaticallyWaitsToMinimizeStalling = true
         p.isMuted = muted
+        p.volume = volume
 
         // 缓冲/失败状态观察
         playerItem.publisher(for: \.status)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] st in
+                guard let self else { return }
                 switch st {
-                case .readyToPlay: self?.isLoading = false
-                case .failed:      self?.isLoading = false
+                case .readyToPlay:
+                    self.isLoading = false
+                    let d = CMTimeGetSeconds(playerItem.duration)
+                    if d.isFinite, d > 0 { self.duration = d }
+                case .failed:
+                    self.isLoading = false
+                    self.isPlaying = false
+                    // 直链可能已过期 → 请服务端重解析（同一 URL 只请求一次，防死循环）
+                    let failedUrl = playerItem.asset.description
+                    if !self.reloadRequestedFor.contains(failedUrl) {
+                        self.reloadRequestedFor.insert(failedUrl)
+                        if self.reloadRequestedFor.count > 20 { self.reloadRequestedFor.removeAll() }
+                        self.onPlaybackFailed?()
+                    }
                 default: break
                 }
             }
@@ -141,14 +244,16 @@ final class MusicPlayer: NSObject, ObservableObject {
         )
 
         player = p
+        bindTimeObserver(p)
         p.play()
         isPlaying = true
     }
 
-    private var observers = Set<AnyCancellable>()
-
     @objc private func itemDidFinish() {
         isPlaying = false
+        position = duration
+        // 上报服务端按播放模式推进（列表循环 / 单曲循环 / 播完结束）
+        onPlaybackEnded?()
     }
 
     /// 把相对路径补成绝对地址
@@ -196,8 +301,6 @@ final class MusicPlayer: NSObject, ObservableObject {
         task.resume()
     }
 
-    private var progressObservers: [String: NSKeyValueObservation] = [:]
-
     // MARK: - 最近听歌
 
     private func recordHistory(_ song: VRSong) {
@@ -209,10 +312,28 @@ final class MusicPlayer: NSObject, ObservableObject {
         let absolute: String
         if let u = resolve(song.url) { absolute = u.absoluteString } else { return }
 
+        // 去重键必须稳定：服务端每次播放都会生成新的 song.id(uid('s'))，
+        // 直接用会导致同一首歌重复出现多行。这里优先用曲库 id / 稳定 URL。
+        let stableId = stableHistoryId(song: song, absoluteURL: absolute)
+
         MusicHistory.shared.recordPlay(
-            songId: song.id, title: song.title, artist: "",
+            songId: stableId, title: song.title, artist: song.artist ?? "",
             url: absolute, source: source
         )
+    }
+
+    /// 生成稳定的历史记录去重键
+    private func stableHistoryId(song: VRSong, absoluteURL: String) -> String {
+        // 1) 曲库文件地址：/api/music/file/<libId> → 用 libId
+        if let r = absoluteURL.range(of: "/api/music/file/") {
+            let libId = String(absoluteURL[r.upperBound...])
+            if !libId.isEmpty { return "lib_\(libId)" }
+        }
+        // 2) 在线曲库：用 libraryId（gd|源|歌id）比 URL 稳定
+        if let lid = song.libraryId, !lid.isEmpty { return "gd_\(lid)" }
+        // 3) 兜底：用去掉 query 的 URL（很多外链带时效参数）
+        let base = absoluteURL.split(separator: "?").first.map(String.init) ?? absoluteURL
+        return "url_\(base)"
     }
 
     // MARK: - 控制
@@ -220,6 +341,10 @@ final class MusicPlayer: NSObject, ObservableObject {
     func setMuted(_ m: Bool) {
         muted = m
         player?.isMuted = m
+    }
+
+    func setVolume(_ v: Float) {
+        volume = min(1, max(0, v))
     }
 
     /// 悬浮音乐控件用：本地暂停 / 继续（全房状态以下一次房间快照校准）
@@ -236,12 +361,35 @@ final class MusicPlayer: NSObject, ObservableObject {
 
     func stop() {
         player?.pause()
+        removeTimeObserver()
         player = nil
+        currentSongKey = ""
         currentUrl = ""
         currentTitle = ""
         currentId = ""
+        position = 0
+        duration = 0
         isPlaying = false
         isLoading = false
         observers.removeAll()
+    }
+
+    /// 进度文本 mm:ss
+    var positionText: String { Self.timeText(position) }
+    var durationText: String { duration > 0 ? Self.timeText(duration) : "--:--" }
+    var progressFraction: Double {
+        guard duration > 0 else { return 0 }
+        return min(1, max(0, position / duration))
+    }
+
+    static func timeText(_ sec: Double) -> String {
+        guard sec.isFinite, sec >= 0 else { return "00:00" }
+        let s = Int(sec)
+        return String(format: "%02d:%02d", s / 60, s % 60)
+    }
+
+    deinit {
+        removeTimeObserver()
+        NotificationCenter.default.removeObserver(self)
     }
 }
