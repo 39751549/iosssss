@@ -10,14 +10,14 @@ struct RoomSettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var roomName = ""
-    @State private var background: RoomBackground = .aurora
-    /// 用户本次是否**主动点过**内置主题瓦片。
+    @State private var background: RoomBackground = RoomBackground.fallback
+    /// 用户本次是否**主动点过**内置背景瓦片。
     ///
     /// 为什么需要这个标记：房间用的是上传的自定义背景时，
-    /// `onAppear` 里的 `RoomBackground(safeRaw:)` 解析不了 "/bg/xxx.png"，只能回退成 .aurora。
+    /// 瓦片里没有一个能对上当前背景，选中态只能落在默认那张上。
     /// 若不加区分，"进设置 → 什么都不改直接点保存" 会因为
-    /// `background.rawValue("aurora") != state.room.background("/bg/xxx.png")` 成立，
-    /// 而把刚上传的自定义背景又覆盖回内置主题 —— 表现就是「自定义背景设了没用 / 一会儿就没了」。
+    /// `background.id("/presets/preset-1.gif") != state.room.background("/bg/bg_xxx.gif")` 成立，
+    /// 而把刚上传的自定义背景又覆盖回内置图 —— 表现就是「自定义背景设了没用 / 一会儿就没了」。
     @State private var themePicked = false
     @State private var showDestroyConfirm = false
     @State private var customNo = ""
@@ -27,10 +27,9 @@ struct RoomSettingsSheet: View {
     private var isHost: Bool { app.isHost }
     private var isVip: Bool { app.me?.vip == true }
 
-    /// 当前房间是否用了上传的自定义背景
+    /// 当前房间是否用了上传的自定义背景（内置的 5 张不算）
     private var isCustomBg: Bool {
-        let bg = state.room.background
-        return bg.hasPrefix("/") || bg.hasPrefix("http")
+        RoomBackground.isCustom(state.room.background)
     }
 
     var body: some View {
@@ -159,7 +158,7 @@ struct RoomSettingsSheet: View {
                         }
 
                         // 已设置自定义背景：预览 + 清除
-                        if isCustomBg || app.roomBackgroundImage != nil {
+                        if isCustomBg {
                             HStack(spacing: 10) {
                                 ZStack {
                                     Color(hex: "27436B").opacity(0.08)
@@ -182,8 +181,9 @@ struct RoomSettingsSheet: View {
                                 Spacer()
                                 Button("清除") {
                                     themePicked = false
-                                    app.setRoomBackground(.aurora)
-                                    app.showToast("已恢复默认主题", kind: .success)
+                                    background = RoomBackground.fallback
+                                    app.setRoomBackground(RoomBackground.fallback)
+                                    app.showToast("已恢复默认背景", kind: .success)
                                 }
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundColor(VRTheme.red.opacity(0.9))
@@ -195,17 +195,21 @@ struct RoomSettingsSheet: View {
                             )
                         }
 
+                        Text("内置背景（固定 5 张）")
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundColor(VRTheme.textMute)
+
                         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 9), count: 3),
                                   spacing: 9) {
-                            ForEach(RoomBackground.allCases) { bg in
-                                BackgroundOption(bg: bg, selected: themePicked && background == bg) {
+                            ForEach(RoomBackground.presets) { bg in
+                                BackgroundOption(bg: bg, selected: !isCustomBg && background == bg) {
                                     guard isHost else {
                                         app.showToast("只有房主能修改房间背景", kind: .error)
                                         return
                                     }
                                     withAnimation(.easeOut(duration: 0.16)) {
                                         background = bg
-                                        themePicked = true   // 明确表达"我要换成这个主题"
+                                        themePicked = true   // 明确表达"我要换成这张"
                                     }
                                 }
                             }
@@ -221,9 +225,9 @@ struct RoomSettingsSheet: View {
                     Button("保存") {
                         let n = roomName.trimmingCharacters(in: .whitespaces)
                         if !n.isEmpty && n != state.room.name { app.renameRoom(n) }
-                        // 只有用户真的点了某个主题瓦片才覆盖背景。
+                        // 只有用户真的点了某张内置背景瓦片才覆盖背景。
                         // 这样"上传了自定义背景 → 进来改个房间名 → 保存"不会把背景图reset掉。
-                        if themePicked, background.rawValue != state.room.background {
+                        if themePicked, background.id != state.room.background {
                             app.setRoomBackground(background)
                         }
                         // 改完主动拉一次快照：房间名/背景立刻反映到房间里，
@@ -300,7 +304,7 @@ struct RoomSettingsSheet: View {
         }
         .onAppear {
             roomName = state.room.name
-            background = RoomBackground(safeRaw: state.room.background)
+            background = RoomBackground.resolved(state.room.background)
         }
         .onDisappear {
             // 面板关掉（保存 / ✕ / 下滑）都补拉一次快照：

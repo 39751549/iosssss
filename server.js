@@ -18,6 +18,11 @@ const DATA_FILE = path.join(DATA_DIR, 'store.json');
 // 音乐文件存放目录（上传的音频）
 const MUSIC_DIR = path.join(DATA_DIR, 'music');
 
+/* 内置房间背景：写死 5 张，图片是同仓库的静态资源 public/presets/preset-N.gif，
+ * 对外地址 /presets/preset-N.gif。iOS / Web 两端共用同一套 id，
+ * 新建房间默认用第 1 张。 */
+const DEFAULT_BG = '/presets/preset-1.gif';
+
 /* ================= 在线曲库（GD Studio 免费 API） =================
  * 搜索: https://music-api.gdstudio.xyz/api.php?types=search&source=netease&name=xx&count=20
  * 取播放直链: https://music-api.gdstudio.xyz/api.php?types=url&source=netease&id=xx&br=320
@@ -1020,7 +1025,7 @@ wss.on('connection', (ws) => {
         const id = uid('r');
         const room = { id, no: randRoomNo(),
           name: safeStr(msg.name, 22) || (store.users[ownerId].name + ' 的房间'),
-          background: typeof msg.background === 'string' ? safeStr(msg.background, 60) : 'aurora',
+          background: typeof msg.background === 'string' ? safeStr(msg.background, 60) : DEFAULT_BG,
           ownerId, createdAt: Date.now() };
         store.rooms[id] = room; saveStore();
         return reply({ type: 'room:created', data: {

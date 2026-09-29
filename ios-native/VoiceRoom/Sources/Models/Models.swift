@@ -241,36 +241,64 @@ struct VRRoomState: Codable, Equatable {
     }
 }
 
-// MARK: - 房间背景主题
+// MARK: - 房间内置背景（写死的 5 张）
 
-enum RoomBackground: String, CaseIterable, Identifiable {
-    case aurora, hearts   // 默认只保留 2 个主题，其余靠自定义背景图
-    var id: String { rawValue }
+/// 内置房间背景：**固定 5 张**，由客户端写死，用户不可增删。
+///
+/// 为什么用「服务端路径」当 id，而不是把图打进 App 包：
+/// 1) 同一套 id 在 iOS / Web 两端通用，房主换了背景，两端看到的都一样；
+/// 2) 这 5 张动图加起来 11MB，打进包里 IPA 会翻三倍；
+/// 3) 图片走 MediaCache 按 URL 缓存（内存 + 磁盘两级），第一次看过之后本地就有，
+///    后续进出房间、切后台回来都是瞬时命中，不再走网络。
+///
+/// 老房间存的是 aurora / hearts 这类已下线的主题名 —— 一律按默认背景显示，
+/// 不会出现「背景空白」。
+struct RoomBackground: Identifiable, Hashable {
 
-    var label: String {
-        switch self {
-        case .aurora: return "极光"
-        case .hearts: return "爱心雨"
-        }
+    /// 存储 / 传输用的值（即服务端 room.background 字段），形如 "/presets/preset-1.gif"
+    let id: String
+    let label: String
+    /// 兜底渐变色号：图片还没就位时先顶上，避免白屏闪一下
+    let colors: [String]
+
+    var rawValue: String { id }
+
+    /// 写死的 5 个内置背景（顺序 = 背景文件夹里的顺序）
+    static let presets: [RoomBackground] = [
+        RoomBackground(id: "/presets/preset-1.gif", label: "紫海",
+                       colors: ["BFE3FF", "DCEBFF", "FFF7EA"]),
+        RoomBackground(id: "/presets/preset-2.gif", label: "幻月",
+                       colors: ["D9E4FF", "E9D9F5", "FFF0E6"]),
+        RoomBackground(id: "/presets/preset-3.gif", label: "小鹿",
+                       colors: ["E4D9FF", "F3E6FF", "FFF3EA"]),
+        RoomBackground(id: "/presets/preset-4.gif", label: "星云",
+                       colors: ["FFE3F1", "E5E6FF", "E2F6FF"]),
+        RoomBackground(id: "/presets/preset-5.gif", label: "云海",
+                       colors: ["FFE0EF", "F4D9FF", "FFEEDF"])
+    ]
+
+    /// 默认背景：新房间、清掉自定义背景后都回到这张
+    static let fallback: RoomBackground = RoomBackground.presets[0]
+
+    /// 精确匹配内置背景；不是内置的返回 nil
+    static func match(_ raw: String) -> RoomBackground? {
+        presets.first { $0.id == raw }
     }
 
-    var icon: String {
-        switch self {
-        case .aurora: return "🌌"
-        case .hearts: return "💖"
-        }
+    /// 把服务端下发的 background 解析成内置背景。
+    /// 老主题名（aurora / hearts…）与空值统一落到默认背景。
+    static func resolved(_ raw: String) -> RoomBackground {
+        match(raw) ?? fallback
     }
 
-    /// 是否带动态粒子层
-    var isDynamic: Bool {
-        switch self {
-        case .hearts: return true
-        default: return false
-        }
+    /// 是否是「用户上传的自定义背景」（以 / 或 http 开头，且不是内置的那 5 张）
+    static func isCustom(_ raw: String) -> Bool {
+        guard raw.hasPrefix("/") || raw.hasPrefix("http") else { return false }
+        return match(raw) == nil
     }
 
-    init(safeRaw: String) {
-        // 旧数据里的 sunset/night 等主题已下线，回退到极光
-        self = RoomBackground(rawValue: safeRaw) ?? .aurora
+    /// 是否是图片背景（内置图或自定义图）—— 决定要不要去加载图片
+    static func isImage(_ raw: String) -> Bool {
+        raw.hasPrefix("/") || raw.hasPrefix("http")
     }
 }

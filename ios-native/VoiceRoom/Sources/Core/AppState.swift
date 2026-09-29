@@ -215,6 +215,10 @@ final class AppState: ObservableObject {
             LocalStore.saveUser(user)
             requestRoomList()
             requestMyRoom()
+            // 登录后顺手把 5 张内置背景拉进本地缓存：只按 .thumb 解码（内存很省），
+            // 主要目的是把文件落进磁盘缓存 —— 之后进房间、打开背景选择器都是本地读取，
+            // 不会再有"设了背景要等半天才出来"的观感。
+            warmUpPresetBackgrounds()
             // 断线重连后自动回到原来所在的房间。
             // 放在 authOK 里而不是 status 回调里：这样能保证服务端已认得这个身份，
             // 也保证 join 一定排在 auth 之后（顺序有保证，不用赌时序）。
@@ -519,24 +523,34 @@ final class AppState: ObservableObject {
     func setRoomBackground(_ bg: RoomBackground) {
         guard let st = roomState else { return }
         connection.send(.roomBackground(roomId: st.room.id, background: bg.rawValue))
-        // 乐观更新：内置主题不需要下载，直接换掉本地背景图，
-        // 否则要等服务端快照回包才有变化，用户会觉得"点了没反应"。
-        roomBackgroundURL = nil
-        roomBackgroundImage = nil
-        // 同步把房间状态里的 background 也改掉 —— 渐变是照 state.room.background 画的，
-        // 只清图片不改这里的话，画面要等下一次快照才变（表现为"必须退出重进才生效"）。
+        // 乐观更新：本地先把房间状态改掉，再自己去加载这张图，
+        // 不等服务端快照回包 —— 否则用户点完要盯着旧背景等，体感就是"点了没反应"。
+        // 同步改 roomState.background 还有个副作用是好的：渐变兜底层是照它画的，
+        // 只换图片不改这里的话，画面要等下一次快照才变（表现为"必须退出重进才生效"）。
         roomState?.room.background = bg.rawValue
+        refreshRoomBackground()
         // 再拉一次快照兜底，保证和其他端一致
         requestRoomSync()
     }
 
     // MARK: - 房间背景图
 
+    /// 预热 5 张内置背景（只解第一帧，内存开销极小；目的是喂饱磁盘缓存）
+    func warmUpPresetBackgrounds() {
+        for bg in RoomBackground.presets {
+            guard let url = VRConfig.absoluteURL(for: bg.id) else { continue }
+            MediaCache.shared.prefetch(url, profile: .thumb)
+        }
+    }
+
     /// 依据当前房间快照刷新背景图（URL 没变就直接复用，不重新解码）
+    ///
+    /// 内置 5 张背景也是「路径」（/presets/preset-N.gif），走的就是这条通用逻辑，
+    /// 不需要给内置/自定义分两套代码 —— 自定义背景的行为因此完全没变。
     private func refreshRoomBackground() {
         let path = roomState?.effectiveBackground ?? ""
         guard let url = VRConfig.absoluteURL(for: path) else {
-            // 内置主题（或空）：不用图片，交给兜底渐变
+            // 老主题名（aurora/hearts）或空值：没有图，交给兜底渐变
             roomBackgroundURL = nil
             roomBackgroundImage = nil
             return

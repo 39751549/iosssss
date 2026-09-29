@@ -102,12 +102,16 @@ final class MediaCache: NSObject {
         case avatar
         /// 房间背景：铺满屏幕，但源图本身很小，帧数上限比尺寸更关键
         case background
+        /// 列表/选择器里的缩略图（背景瓦片、房间卡片）：只要一帧静态图，
+        /// 尺寸小、只解一帧，滚动时不占内存
+        case thumb
         case generic
 
         var maxPixel: CGFloat {
             switch self {
             case .avatar:     return 256
             case .background: return 1024
+            case .thumb:      return 320
             case .generic:    return 1024
             }
         }
@@ -116,6 +120,7 @@ final class MediaCache: NSObject {
             switch self {
             case .avatar:     return 48
             case .background: return 20
+            case .thumb:      return 1
             case .generic:    return 24
             }
         }
@@ -125,6 +130,7 @@ final class MediaCache: NSObject {
             switch self {
             case .avatar:     return "#a"
             case .background: return "#b"
+            case .thumb:      return "#t"
             case .generic:    return "#g"
             }
         }
@@ -160,6 +166,9 @@ final class MediaCache: NSObject {
             i += step
         }
         guard !frames.isEmpty else { return UIImage(data: data) }
+        // 只保留一帧（thumb 档）时没必要包成动图：给个普通 UIImage，
+        // SwiftUI 直接当静态图渲染，省掉一层定时器与帧表
+        if frames.count == 1 { return frames[0] }
         return UIImage.animatedImage(with: frames, duration: total > 0 ? total : Double(frames.count) * 0.1)
     }
 
@@ -330,11 +339,15 @@ struct CachedAsyncImage: View {
     }
 
     let url: URL?
+    /// 解码档位：列表缩略图传 .thumb（只解一帧），房间背景传 .background
+    let profile: DecodeProfile
     private let content: (Phase) -> AnyView
 
     /// 泛型只落在初始化器上（仅在调用点做局部推断）
-    init<C: View>(url: URL?, @ViewBuilder content: @escaping (Phase) -> C) {
+    init<C: View>(url: URL?, profile: DecodeProfile = .generic,
+                  @ViewBuilder content: @escaping (Phase) -> C) {
         self.url = url
+        self.profile = profile
         self.content = { AnyView(content($0)) }
     }
 
@@ -371,11 +384,11 @@ struct CachedAsyncImage: View {
         }
         let key = url.absoluteString
         loadingKey = key
-        if let hit = MediaCache.shared.cachedImage(for: url) {
+        if let hit = MediaCache.shared.cachedImage(for: url, profile: profile) {
             image = hit
             return
         }
-        MediaCache.shared.image(for: url) { img in
+        MediaCache.shared.image(for: url, profile: profile) { img in
             // 迟到的旧 URL 结果不要覆盖当前 URL 的图
             guard loadingKey == key else { return }
             image = img

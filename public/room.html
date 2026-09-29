@@ -9,7 +9,7 @@
 <title>语音房</title>
 <link rel="stylesheet" href="/css/app.css">
 </head>
-<body class="bg-aurora">
+<body>
 
 <div class="app" id="app">
 
@@ -383,7 +383,7 @@ function applyState(s) {
   if (!roomSettingsDirty) {
     document.getElementById('setRoomNo').textContent = s.room.no;
     document.getElementById('setRoomName').value = s.room.name;
-    const isCustomBg = s.room.background && s.room.background.startsWith('/');
+    const isCustomBg = VR.isCustomBg(s.room.background);
     document.querySelectorAll('#setBgPicker .bg-opt').forEach(el =>
       el.classList.toggle('sel', !isCustomBg && el.dataset.id === s.room.background));
     updateCustomBgPreview(s.room.background);
@@ -701,7 +701,7 @@ function updateCoinUI() {
 /* ================= 房间设置 ================= */
 function renderSetBgPicker() {
   document.getElementById('setBgPicker').innerHTML = VR.BACKGROUNDS.map(b =>
-    `<div class="bg-opt ${b.cls}" data-id="${b.id}" onclick="pickSetBg('${b.id}')">
+    `<div class="bg-opt" data-id="${b.id}" style="${VR.bgStyle(b.id)}" onclick="pickSetBg('${b.id}')">
        <div class="bg-check">✓</div><div class="bg-label">${b.name}</div>
      </div>`).join('');
 }
@@ -721,14 +721,14 @@ function saveRoomSettings() {
 }
 document.getElementById('setRoomName').addEventListener('input', () => roomSettingsDirty = true);
 
-/* 自定义背景图 */
+/* 自定义背景图（内置的 5 张不算自定义） */
 function updateCustomBgPreview(bg) {
   const el = document.getElementById('setCustomBgPreview');
-  if (bg && bg.startsWith('/')) {
+  if (VR.isCustomBg(bg)) {
     el.innerHTML = `<img src="${VR.esc(bg)}" style="width:58px;height:36px;object-fit:cover;border-radius:8px;flex:none">
       <span>已使用自定义背景图</span>`;
   } else {
-    el.textContent = '未设置（当前使用主题背景）';
+    el.textContent = '未设置（当前使用内置背景）';
   }
 }
 document.getElementById('setBgFile').addEventListener('change', async (e) => {

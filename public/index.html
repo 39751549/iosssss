@@ -11,7 +11,7 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/icons/icon-180.png">
 </head>
-<body class="bg-aurora">
+<body>
 
 <div class="page" id="page">
 
@@ -180,7 +180,7 @@
 let ME = null;      // 当前用户对象
 let USER_ID = null; // 持久 userId
 let WS = null;
-let selectedBg = 'aurora';
+let selectedBg = VR.DEFAULT_BG;
 let loginGender = 'secret';
 let online = false;
 
@@ -192,10 +192,10 @@ let online = false;
 
   // 渲染背景选择器
   document.getElementById('bgPicker').innerHTML = VR.BACKGROUNDS.map(b =>
-    `<div class="bg-opt ${b.cls}" data-id="${b.id}" onclick="pickBg('${b.id}')">
+    `<div class="bg-opt" data-id="${b.id}" style="${VR.bgStyle(b.id)}" onclick="pickBg('${b.id}')">
        <div class="bg-check">✓</div><div class="bg-label">${b.name}</div>
      </div>`).join('');
-  pickBg('aurora');
+  pickBg(VR.DEFAULT_BG);
 
   // 性别切换
   bindGender('loginGender', v => loginGender = v);
@@ -342,7 +342,7 @@ function renderRooms(list) {
   }
   box.innerHTML = list.map(r => `
     <div class="room-item" onclick="joinRoom('${r.id}')">
-      <div class="room-thumb ${VR.bgClass(r.background)}">${VR.bgIcon(r.background)}</div>
+      <div class="room-thumb" style="${VR.bgStyle(r.background)}"></div>
       <div class="room-meta">
         <div class="rn">${VR.esc(r.name)}</div>
         <div class="ro">房间号 ${r.no}</div>
@@ -361,7 +361,7 @@ function renderMyRoom(room) {
   card.style.display = '';
   body.innerHTML = `
     <div class="my-room-hero" onclick="joinRoom('${room.id}')">
-      <div class="mrh-thumb ${VR.bgClass(room.background)}">${VR.bgIcon(room.background)}</div>
+      <div class="mrh-thumb" style="${VR.bgStyle(room.background)}"></div>
       <div class="mrh-meta">
         <div class="mrh-name">${VR.esc(room.name)}</div>
         <div class="mrh-no">房间号 ${room.no} · ${room.count ? room.count + ' 人在房间里' : '此刻没人'}</div>

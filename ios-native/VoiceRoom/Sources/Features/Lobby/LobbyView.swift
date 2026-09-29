@@ -237,16 +237,7 @@ struct LobbyView: View {
 
     private func myRoomRow(_ room: VRMyRoom) -> some View {
         HStack(spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    .fill(
-                        LinearGradient(colors: VRTheme.background(for: room.background),
-                                       startPoint: .topLeading, endPoint: .bottomTrailing)
-                    )
-                    .frame(width: 46, height: 46)
-                Text(RoomBackground(safeRaw: room.background).icon)
-                    .font(.system(size: 21))
-            }
+            RoomBackgroundThumb(background: room.background, size: 46)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(room.name.isEmpty ? "我的房间" : room.name)
@@ -330,16 +321,7 @@ struct LobbyView: View {
 
     private func roomRow(_ room: VRRoomSummary) -> some View {
         HStack(spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    .fill(
-                        LinearGradient(colors: VRTheme.background(for: room.background),
-                                       startPoint: .topLeading, endPoint: .bottomTrailing)
-                    )
-                    .frame(width: 46, height: 46)
-                Text(RoomBackground(safeRaw: room.background).icon)
-                    .font(.system(size: 21))
-            }
+            RoomBackgroundThumb(background: room.background, size: 46)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(room.name)

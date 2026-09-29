@@ -23,11 +23,12 @@
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { height: 100%; }
+/* 默认就是内置背景第 1 张：登录页/首帧不会先黑一下再换 */
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro SC", "PingFang SC", "Microsoft YaHei", sans-serif;
   color: var(--text);
-  background: var(--bg);
+  background: var(--bg) url('/presets/preset-1.gif') center/cover no-repeat;
   overflow: hidden;
   overscroll-behavior: none;
   -webkit-font-smoothing: antialiased;
@@ -104,11 +105,12 @@ input, textarea { outline: none; }
   background: linear-gradient(180deg, rgba(5,8,20,.25), rgba(5,8,20,.55));
   animation: kenburns 26s ease-in-out infinite alternate;
 }
-/* 缩略图使用背景类时，禁用全屏伪元素光斑层 */
+/* 缩略图用背景类时，禁用全屏伪元素光斑层 */
 .bg-opt::before, .room-thumb::before, .mrh-thumb::before { content: none !important; }
-.bg-opt.bg-custom, .room-thumb.bg-custom, .mrh-thumb.bg-custom {
-  background-image: linear-gradient(135deg, #3B4A8C, #8C3B6B);
-  background-size: cover;
+/* 缩略图/瓦片：图片通过内联 background-image 铺满 */
+.bg-opt, .room-thumb, .mrh-thumb {
+  background-size: cover; background-position: center; background-repeat: no-repeat;
+  background-color: rgba(255,255,255,.06);
 }
 @keyframes kenburns {
   0%   { transform: scale(1); }
@@ -658,8 +660,8 @@ input, textarea { outline: none; }
 }
 .seg button.active { background: linear-gradient(135deg, var(--brand), var(--brand-2)); color: #fff; }
 
-/* 背景选择器 */
-.bg-picker { display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px; }
+/* 背景选择器（内置固定 5 张，3 列排布：3 + 2） */
+.bg-picker { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; }
 .bg-opt {
   aspect-ratio: 1/1.25; border-radius: 13px; border: 2px solid transparent;
   position: relative; overflow: hidden; transition: transform .14s;

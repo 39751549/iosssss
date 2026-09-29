@@ -154,6 +154,20 @@
       </div>
       <button class="btn" onclick="saveVips()">保存 VIP 码</button>
     </div>
+
+    <div class="flex" style="margin-bottom:14px;align-items:flex-end">
+      <div style="flex:1;min-width:250px">
+        <div class="hint" style="margin-bottom:7px">
+          全局房间背景模板（对<b>所有房间</b>通用，支持 GIF 动图 · 建议 1080×1920 · 限 6MB）
+          <span id="defBgState"></span>
+        </div>
+      </div>
+      <button class="btn" onclick="pickDefaultBg()">🖼️ 上传全局背景</button>
+      <button class="btn" onclick="clearDefaultBg()">清除</button>
+    </div>
+    <input type="file" id="adminDefBgFile" accept="image/*" style="display:none">
+    <input type="file" id="adminAvFile" accept="image/*" style="display:none">
+
     <div class="flex">
       <div style="flex:1;min-width:250px">
         <div class="hint" style="margin-bottom:7px">修改管理密码</div>
@@ -177,6 +191,8 @@ let MUSIC = [];
 (function init() {
   initUpload();
   document.getElementById('adminBgFile').addEventListener('change', onAdminBgFile);
+  document.getElementById('adminDefBgFile').addEventListener('change', onDefaultBgFile);
+  document.getElementById('adminAvFile').addEventListener('change', onUserAvatarFile);
   if (PWD) { showPanel(); load(); }
   else document.getElementById('pwd').focus();
 })();
@@ -216,6 +232,8 @@ async function load() {
   DATA = r.data;
   renderStats(); renderOnline(); renderRooms(); renderUsers();
   document.getElementById('vipsInput').value = (DATA.vips || []).join(',');
+  const st = document.getElementById('defBgState');
+  if (st) st.innerHTML = DATA.defaultBg ? ' · 当前：<span class="tag green">已设置</span>' : ' · 当前：<span class="tag gray">未设置</span>';
   loadMusic();
 }
 
@@ -320,9 +338,66 @@ function renderUsers() {  const kw = (document.getElementById('userSearch').valu
         <button class="btn btn-sm btn-gold" onclick="giveCoins('${u.id}')">+金币</button>
         <button class="btn btn-sm" onclick="setCharm('${u.id}')">设魅力</button>
         <button class="btn btn-sm" onclick="toggleVip('${u.id}', ${u.vip ? 'false' : 'true'})">${u.vip ? '取消VIP' : '设VIP'}</button>
+        <button class="btn btn-sm" onclick="pickUserAvatar('${u.id}')">🖼️ 头像</button>
         <button class="btn btn-sm" style="background:rgba(255,92,108,.2)" onclick="delUser('${u.id}','${VR.esc(u.name)}')">删除</button>
       </div></td>
     </tr>`).join('');
+}
+
+/* ---------- 全局背景模板（对所有房间通用） ---------- */
+function pickDefaultBg() {
+  document.getElementById('adminDefBgFile').click();
+}
+async function onDefaultBgFile(e) {
+  const f = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  if (f.size > 6 * 1024 * 1024) return VR.toast('图片太大了（限 6MB）', 'err');
+  VR.toast('正在上传全局背景…');
+  try {
+    const buf = await f.arrayBuffer();
+    const res = await fetch('/api/admin/upload-default-bg?password=' + encodeURIComponent(PWD), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: buf
+    });
+    const j = await res.json().catch(() => ({ ok: false, msg: '解析失败' }));
+    if (!j.ok) throw new Error(j.msg || '上传失败');
+    VR.toast('全局背景已生效，所有房间通用 ✨', 'ok');
+    load();
+  } catch (err) { VR.toast(err.message || '上传失败', 'err'); }
+}
+async function clearDefaultBg() {
+  if (!confirm('确定清除全局背景模板？房间将回到默认主题。')) return;
+  const r = await api('clear-default-bg', {});
+  if (r) { VR.toast('已清除全局背景', 'ok'); load(); }
+}
+
+/* ---------- 管理后台给用户设置头像 ---------- */
+let avTargetUser = null;
+function pickUserAvatar(uid) {
+  avTargetUser = uid;
+  document.getElementById('adminAvFile').click();
+}
+async function onUserAvatarFile(e) {
+  const f = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (!f || !avTargetUser) return;
+  if (f.size > 8 * 1024 * 1024) return VR.toast('头像太大了（限 8MB）', 'err');
+  VR.toast('正在上传头像…');
+  try {
+    const buf = await f.arrayBuffer();
+    const res = await fetch('/api/admin/upload-avatar?password=' + encodeURIComponent(PWD) +
+                            '&userId=' + encodeURIComponent(avTargetUser), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: buf
+    });
+    const j = await res.json().catch(() => ({ ok: false, msg: '解析失败' }));
+    if (!j.ok) throw new Error(j.msg || '上传失败');
+    VR.toast('头像已更新（支持透明 PNG / GIF）', 'ok');
+    load();
+  } catch (err) { VR.toast(err.message || '上传失败', 'err'); }
 }
 
 /* ---- 操作 ---- */

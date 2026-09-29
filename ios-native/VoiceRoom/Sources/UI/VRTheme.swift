@@ -42,23 +42,21 @@ enum VRTheme {
     static let radius: CGFloat = 18
     static let radiusSm: CGFloat = 12
 
-    // MARK: 房间背景渐变（明亮氛围）
+    // MARK: 房间背景渐变（图片就位前的兜底，同时也给列表缩略图当底色）
     static func background(for id: String) -> [Color] {
-        switch RoomBackground(safeRaw: id) {
-        case .aurora:
-            return [Color(hex: "BFE3FF"), Color(hex: "DCEBFF"), Color(hex: "FFF7EA")]
-        case .hearts:
-            return [Color(hex: "FFE3EE"), Color(hex: "FFD1E5"), Color(hex: "FFF3E0")]
-        }
+        RoomBackground.resolved(id).colors.map { Color(hex: $0) }
     }
 
     /// 房间背景上的光晕（叠加层）
     static func glowColors(for id: String) -> [Color] {
-        switch RoomBackground(safeRaw: id) {
-        case .aurora:
-            return [Color.white.opacity(0.55), brand.opacity(0.28), pink.opacity(0.22)]
-        case .hearts:
-            return [pink.opacity(0.32), gold.opacity(0.18)]
+        let idx = RoomBackground.presets.firstIndex(of: RoomBackground.resolved(id)) ?? 0
+        switch idx % 3 {
+        case 0:
+            return [Color.white.opacity(0.50), brand.opacity(0.26), pink.opacity(0.20)]
+        case 1:
+            return [pink.opacity(0.30), gold.opacity(0.16)]
+        default:
+            return [green.opacity(0.24), brand.opacity(0.20)]
         }
     }
 

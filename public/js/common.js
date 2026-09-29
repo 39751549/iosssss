@@ -148,52 +148,52 @@ const VR = (() => {
   }
 
   /* ---------- 房间背景 ---------- */
-  /* fx: 需要动态粒子层的主题（CSS 动画实现）。默认只保留 2 个，更多靠自定义背景图 */
+  /* 内置背景固定 5 张，图片是同仓库的静态资源 public/presets/preset-N.gif，
+     由服务端以 /presets/preset-N.gif 对外提供。
+     id 和 iOS 端完全一致 —— 房主在哪一端换的背景，另一端看到的都是同一张图。
+     用户上传的自定义背景走 /bg/xxx 路径，逻辑不变。 */
   const BACKGROUNDS = [
-    { id: 'aurora',  name: '极光',   cls: 'bg-aurora',  icon: '🌌', fx: null },
-    { id: 'hearts',  name: '爱心雨', cls: 'bg-hearts',  icon: '💖', fx: 'hearts' }
+    { id: '/presets/preset-1.gif', name: '紫海' },
+    { id: '/presets/preset-2.gif', name: '幻月' },
+    { id: '/presets/preset-3.gif', name: '小鹿' },
+    { id: '/presets/preset-4.gif', name: '星云' },
+    { id: '/presets/preset-5.gif', name: '云海' }
   ];
+  /** 默认背景：新房间、清掉自定义背景后都回到这张 */
+  const DEFAULT_BG = BACKGROUNDS[0].id;
+
   function findBg(id) {
     return BACKGROUNDS.find(b => b.id === id) || null;
   }
-  function bgClass(id) {
-    const b = findBg(id);
-    return b ? b.cls : 'bg-custom';
+  /** 是不是「图片背景」（内置的 5 张和自定义上传的都是路径） */
+  function isImageBg(id) {
+    return !!(id && (id.startsWith('/') || id.startsWith('http')));
   }
-  function bgIcon(id) {
-    const b = findBg(id);
-    return b ? b.icon : '🖼️';
+  /** 是不是用户上传的自定义背景（是路径，但不是内置的那 5 张） */
+  function isCustomBg(id) {
+    return isImageBg(id) && !findBg(id);
   }
-  const BG_CLASSES = BACKGROUNDS.map(b => b.cls).concat(['bg-custom']);
+  /** 缩略图内联样式：图片背景直接铺 background-image */
+  function bgStyle(id) {
+    return isImageBg(id)
+      ? `background-image:url('${esc(id)}');background-size:cover;background-position:center`
+      : '';
+  }
+  /** 真正要显示的图：老主题名（aurora / hearts）已下线 → 落到默认背景，不会白屏 */
+  function resolveBg(id) {
+    return isImageBg(id) ? id : DEFAULT_BG;
+  }
+  /** 页面 body 上可能残留的旧主题类，切背景时统一摘掉 */
+  const BG_CLASSES = ['bg-aurora', 'bg-hearts', 'bg-sakura', 'bg-bubbles', 'bg-meteor', 'bg-custom'];
 
-  const FX_CONTENT = {
-    stars:   () => Array.from({ length: 16 }, (_, i) => `<span class="fx-star" style="left:${(i * 61) % 100}%;top:${(i * 37) % 60}%;animation-delay:${(i % 6) * 0.7}s"></span>`).join(''),
-    hearts:  () => Array.from({ length: 10 }, (_, i) => `<span class="fx-hearts" style="left:${(i * 11 + 4) % 96}%;animation-delay:${(i * 1.7).toFixed(1)}s;animation-duration:${(9 + (i % 4) * 2.2).toFixed(1)}s;font-size:${14 + (i % 3) * 8}px">💖</span>`).join(''),
-    sakura:  () => Array.from({ length: 12 }, (_, i) => `<span class="fx-sakura" style="left:${(i * 8.5 + 3) % 96}%;animation-delay:${(i * 1.3).toFixed(1)}s;animation-duration:${(8 + (i % 5) * 1.8).toFixed(1)}s;font-size:${13 + (i % 3) * 6}px">🌸</span>`).join(''),
-    bubbles: () => Array.from({ length: 14 }, (_, i) => `<span class="fx-bubble" style="left:${(i * 7.3 + 2) % 95}%;animation-delay:${(i * 1.1).toFixed(1)}s;animation-duration:${(7 + (i % 4) * 2).toFixed(1)}s;width:${10 + (i % 4) * 7}px;height:${10 + (i % 4) * 7}px"></span>`).join(''),
-    meteor:  () => Array.from({ length: 3 }, (_, i) => `<span class="fx-meteor" style="left:${18 + i * 30}%;animation-delay:${(i * 2.6).toFixed(1)}s"></span>`).join('')
-  };
-
-  /** 应用房间背景（支持主题 id 或自定义图片 URL，如 /bg/xxx.jpg） */
+  /** 应用房间背景（内置 5 张图 / 自定义上传的图，统一按图片背景处理） */
   function applyBackground(id) {
     const body = document.body;
     BG_CLASSES.forEach(c => body.classList.remove(c));
-    body.style.backgroundImage = '';
-    // 清理旧的动态粒子层
+    // 清理旧版主题残留的粒子层
     document.querySelectorAll('.bg-fx').forEach(el => el.remove());
-    const fxBox = document.createElement('div');
-    fxBox.className = 'bg-fx';
-
-    if (id && id.startsWith('/')) {
-      // 自定义背景图（上传到服务器的）
-      body.classList.add('bg-custom');
-      body.style.backgroundImage = `url(${id})`;
-    } else {
-      const b = findBg(id) || BACKGROUNDS[0];
-      body.classList.add(b.cls);
-      if (b.fx && FX_CONTENT[b.fx]) fxBox.innerHTML = FX_CONTENT[b.fx]();
-    }
-    body.appendChild(fxBox);
+    body.classList.add('bg-custom');
+    body.style.backgroundImage = `url(${resolveBg(id)})`;
   }
 
   /* ---------- VIP 等级徽章（1-12 级） ---------- */
@@ -237,5 +237,6 @@ const VR = (() => {
 
   return { LS, toast, esc, avatarHtml, genAvatar, avatarColor, hhmm, connect,
            openSheet, closeSheet, openModal, closeModal, fileToCompressedDataURL,
-           GENDER, genderIcon, BACKGROUNDS, bgClass, bgIcon, applyBackground, shortNum, haptic, copy, vipBadge };
+           GENDER, genderIcon, BACKGROUNDS, DEFAULT_BG, findBg, isImageBg, isCustomBg,
+           bgStyle, resolveBg, applyBackground, shortNum, haptic, copy, vipBadge };
 })();

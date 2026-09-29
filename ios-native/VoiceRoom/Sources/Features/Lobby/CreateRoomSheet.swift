@@ -6,7 +6,7 @@ struct CreateRoomSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var roomName = ""
-    @State private var background: RoomBackground = .aurora
+    @State private var background: RoomBackground = RoomBackground.fallback
 
     var body: some View {
         ZStack {
@@ -32,12 +32,15 @@ struct CreateRoomSheet: View {
 
                         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 9), count: 3),
                                   spacing: 9) {
-                            ForEach(RoomBackground.allCases) { bg in
+                            ForEach(RoomBackground.presets) { bg in
                                 BackgroundOption(bg: bg, selected: background == bg) {
                                     withAnimation(.easeOut(duration: 0.16)) { background = bg }
                                 }
                             }
                         }
+                        Text("固定 5 张内置背景，建房后还能在房间设置里换。")
+                            .font(.system(size: 11))
+                            .foregroundColor(VRTheme.textMute)
                     }
 
                     Button("创建并进入") {
@@ -70,7 +73,37 @@ struct CreateRoomSheet: View {
     }
 }
 
-/// 背景选项卡片
+/// 房间列表 / 卡片里的小缩略图。
+/// 内置背景与自定义背景都能显示真实图片；取不到图时只留渐变底，不会空一块白。
+struct RoomBackgroundThumb: View {
+    let background: String
+    let size: CGFloat
+    var corner: CGFloat = 13
+
+    var body: some View {
+        ZStack {
+            LinearGradient(colors: VRTheme.background(for: background),
+                           startPoint: .topLeading, endPoint: .bottomTrailing)
+
+            if let url = VRConfig.absoluteURL(for: background) {
+                // .thumb 档：只解第一帧，列表滚动不占内存
+                CachedAsyncImage(url: url, profile: .thumb) { phase in
+                    if case let .success(img) = phase {
+                        Image(uiImage: img)
+                            .resizable()
+                            .scaledToFill()
+                    } else {
+                        Color.clear
+                    }
+                }
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
+    }
+}
+
+/// 背景选项卡片（内置背景瓦片：显示真实缩略图）
 struct BackgroundOption: View {
     let bg: RoomBackground
     let selected: Bool
@@ -79,12 +112,26 @@ struct BackgroundOption: View {
     var body: some View {
         Button(action: action) {
             ZStack(alignment: .bottom) {
-                RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    .fill(
-                        LinearGradient(colors: VRTheme.background(for: bg.rawValue),
-                                       startPoint: .topLeading, endPoint: .bottomTrailing)
-                    )
+                // 兜底渐变 + 真实缩略图。
+                // 缩略图放在 overlay 里（而不是 ZStack 的兄弟节点）：
+                // scaledToFill 的图片会比格子大，放 overlay 里就不会把网格撑变形，
+                // 溢出部分由 .clipped() 裁掉。
+                LinearGradient(colors: VRTheme.background(for: bg.id),
+                               startPoint: .topLeading, endPoint: .bottomTrailing)
                     .frame(height: 76)
+                    .overlay(
+                        // .thumb 档只解第一帧：瓦片是静态的，没必要把整段动图解进内存
+                        CachedAsyncImage(url: VRConfig.absoluteURL(for: bg.id), profile: .thumb) { phase in
+                            if case let .success(img) = phase {
+                                Image(uiImage: img)
+                                    .resizable()
+                                    .scaledToFill()
+                            } else {
+                                Color.clear
+                            }
+                        }
+                    )
+                    .clipped()
 
                 Text(bg.label)
                     .font(.system(size: 10.5, weight: .semibold))
