@@ -26,8 +26,8 @@ enum VRConfig {
         return URL(string: "\(scheme)://\(host)")
     }
 
-    /// 把服务端下发的相对路径（如背景图 `/bg/xxx.gif`）解析成绝对 URL。
-    /// 内置主题名（aurora/hearts…）不是路径，返回 nil。
+    /// 把服务端下发的相对路径（背景图 `/bg/xxx.gif`、内置背景 `/presets/preset-N.gif`）
+    /// 解析成绝对 URL。老的主题名（aurora/hearts…）不是路径，返回 nil（走兜底渐变）。
     static func absoluteURL(for path: String) -> URL? {
         guard !path.isEmpty else { return nil }
         if path.hasPrefix("http") { return URL(string: path) }
