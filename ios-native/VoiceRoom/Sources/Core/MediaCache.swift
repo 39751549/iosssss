@@ -339,12 +339,14 @@ struct CachedAsyncImage: View {
     }
 
     let url: URL?
-    /// 解码档位：列表缩略图传 .thumb（只解一帧），房间背景传 .background
-    let profile: DecodeProfile
+    /// 解码档位：列表缩略图传 .thumb（只解一帧），房间背景传 .background。
+    /// 注意要写全 `MediaCache.DecodeProfile` —— 这个结构体在文件作用域，
+    /// 而 DecodeProfile 是嵌套在 MediaCache 里的，不加限定名编译会说 "cannot find type"。
+    let profile: MediaCache.DecodeProfile
     private let content: (Phase) -> AnyView
 
     /// 泛型只落在初始化器上（仅在调用点做局部推断）
-    init<C: View>(url: URL?, profile: DecodeProfile = .generic,
+    init<C: View>(url: URL?, profile: MediaCache.DecodeProfile = .generic,
                   @ViewBuilder content: @escaping (Phase) -> C) {
         self.url = url
         self.profile = profile
