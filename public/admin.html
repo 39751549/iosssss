@@ -27,6 +27,17 @@
   tr:hover td { background: rgba(255,255,255,.03); }
   .u-cell { display: flex; align-items: center; gap: 9px; min-width: 150px; }
   .u-cell .avatar { width: 32px; height: 32px; font-size: 12px; }
+  /* 房间背景缩略图 */
+  .bg-thumb {
+    width: 52px; height: 34px; border-radius: 8px; flex: none;
+    background-size: cover; background-position: center;
+    background-color: rgba(255,255,255,.08); border: 1px solid var(--border);
+  }
+  /* 头像列：当前头像 + 更换按钮 */
+  .av-cell { display: flex; align-items: center; gap: 8px; }
+  .av-cell .avatar { width: 34px; height: 34px; font-size: 12px; }
+  /* 渲染失败时的占位，避免整块空白又不说明原因 */
+  .render-err { color: var(--red, #FF5C6C); font-size: 12.5px; padding: 14px 0; }
   .tag { display: inline-block; font-size: 10.5px; padding: 2px 7px; border-radius: 6px; background: rgba(123,107,255,.24); color: #B9AEFF; font-weight: 700; }
   .tag.gold { background: rgba(255,201,60,.2); color: var(--gold); }
   .tag.green { background: rgba(56,211,159,.18); color: var(--green); }
@@ -106,13 +117,13 @@
 
   <!-- 全部用户 -->
   <div class="panel">
-    <h2>👥 全部用户 <span class="sub">可发放金币、设置 VIP、改资料</span></h2>
+    <h2>👥 全部用户 <span class="sub">可发放金币、设置 VIP、改昵称资料、设置头像</span></h2>
     <div class="flex" style="margin-bottom:12px">
       <input class="input" id="userSearch" placeholder="搜索昵称或 ID" style="max-width:230px" oninput="renderUsers()">
       <button class="btn btn-sm btn-gold" onclick="giveAllCoins()">💰 全员 +1000 金币</button>
     </div>
     <div class="tbl-wrap"><table><thead><tr>
-      <th>用户</th><th>性别</th><th>金币</th><th>魅力值</th><th>VIP</th><th>操作</th>
+      <th>用户</th><th>性别</th><th>金币</th><th>魅力值</th><th>VIP</th><th>头像</th><th>操作</th>
     </tr></thead><tbody id="userBody"></tbody></table></div>
   </div>
 
@@ -226,15 +237,34 @@ async function api(action, body) {
   return json;
 }
 
+/**
+ * 每块单独兜底。
+ * 之前「房间管理」那块误用了已删除的 VR.bgIcon，一抛错就把后面的
+ * renderUsers() / loadMusic() 一起带走了 —— 表现就是后台「全部用户」空白、
+ * 找不到设置头像的入口，但房间表格看着又是正常的一半。
+ * 一个区块的渲染错误绝不能拖垮整页。
+ */
+function safe(fn, label) {
+  try { fn(); }
+  catch (e) {
+    console.error('[' + label + '] 渲染失败：', e);
+    VR.toast(label + '渲染失败：' + (e && e.message ? e.message : e), 'err');
+  }
+}
+
 async function load() {
   const r = await api('overview');
   if (!r) return;
   DATA = r.data;
-  renderStats(); renderOnline(); renderRooms(); renderUsers();
-  document.getElementById('vipsInput').value = (DATA.vips || []).join(',');
+  safe(renderStats,  '数据总览');
+  safe(renderOnline, '在线用户');
+  safe(renderRooms,  '房间管理');
+  safe(renderUsers,  '全部用户');
+  const vipsInput = document.getElementById('vipsInput');
+  if (vipsInput) vipsInput.value = (DATA.vips || []).join(',');
   const st = document.getElementById('defBgState');
   if (st) st.innerHTML = DATA.defaultBg ? ' · 当前：<span class="tag green">已设置</span>' : ' · 当前：<span class="tag gray">未设置</span>';
-  loadMusic();
+  await loadMusic();
 }
 
 function renderStats() {
@@ -280,14 +310,36 @@ function renderRooms() {
     <tr>
       <td><input class="mini-input" style="width:150px" value="${VR.esc(r.name)}" id="rn_${r.id}"></td>
       <td class="mono" style="color:var(--gold);font-weight:700">${r.no}</td>
-      <td>${VR.bgIcon(r.background)} ${VR.esc((VR.BACKGROUNDS.find(b=>b.id===r.background)||{}).name || (String(r.background).startsWith('/') ? '🖼️ 自定义图' : r.background))}</td>
+      <td><div class="u-cell" style="min-width:0">
+        <div class="bg-thumb" style="background-image:url('${VR.esc(VR.resolveBg(r.background))}')"></div>
+        <span>${VR.esc(bgLabel(r.background))}</span>
+      </div></td>
       <td>${r.count ? '<span class="tag green">' + r.count + ' 人</span>' : '<span class="tag gray">空闲</span>'}</td>
       <td><div class="flex">
         <button class="btn btn-sm" onclick="renameRoom('${r.id}')">改名</button>
-        <button class="btn btn-sm" onclick="pickRoomBg('${r.id}')">🖼️ 背景</button>
+        <select class="mini-input" style="width:98px;padding:6px 4px"
+                onchange="if(this.value){setRoomPreset('${r.id}',this.value);this.value='';}">
+          <option value="">🎨 内置背景</option>
+          ${VR.BACKGROUNDS.map(b => `<option value="${VR.esc(b.id)}">${VR.esc(b.name)}</option>`).join('')}
+        </select>
+        <button class="btn btn-sm" onclick="pickRoomBg('${r.id}')">🖼️ 自定义图</button>
         <button class="btn btn-sm" style="background:rgba(255,92,108,.2)" onclick="delRoom('${r.id}','${VR.esc(r.name)}')">删除</button>
       </div></td>
     </tr>`).join('');
+}
+
+/** 背景显示名：内置 5 张 → 名字；用户上传的 → 自定义图；老主题名 → 默认 */
+function bgLabel(id) {
+  const b = VR.findBg(id);
+  if (b) return b.name;
+  if (VR.isCustomBg(id)) return '自定义图';
+  return '默认';
+}
+
+/** 把房间背景切成某张内置图（走已有的 update-room 接口） */
+async function setRoomPreset(rid, bgId) {
+  const r = await api('update-room', { roomId: rid, background: bgId });
+  if (r) { VR.toast('背景已改为「' + bgLabel(bgId) + '」', 'ok'); load(); }
 }
 
 /* ---------- 房间背景上传 ---------- */
@@ -318,11 +370,19 @@ async function onAdminBgFile(e) {
   }
 }
 
-function renderUsers() {  const kw = (document.getElementById('userSearch').value || '').trim().toLowerCase();
+function renderUsers() {
+  const kw = (document.getElementById('userSearch')?.value || '').trim().toLowerCase();
   let list = DATA.users || [];
   if (kw) list = list.filter(u => (u.name || '').toLowerCase().includes(kw) || (u.id || '').toLowerCase().includes(kw));
   const box = document.getElementById('userBody');
-  if (!list.length) { box.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-mute);padding:22px">没有匹配的用户</td></tr>'; return; }
+  if (!box) return;
+  if (!list.length) {
+    const total = (DATA.users || []).length;
+    box.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--text-mute);padding:22px">${
+      total ? '没有匹配的用户（共 ' + total + ' 个，换个关键词试试）'
+            : '还没有注册用户，等有人用 App 登录后就会出现在这里'}</td></tr>`;
+    return;
+  }
   box.innerHTML = list.map(u => `
     <tr>
       <td><div class="u-cell">${VR.avatarHtml(u, 32)}<div>
@@ -333,12 +393,16 @@ function renderUsers() {  const kw = (document.getElementById('userSearch').valu
       <td>💰 ${VR.shortNum(u.coins)}</td>
       <td>💖 ${VR.shortNum(u.charm)}</td>
       <td>${u.vip ? '<span class="tag gold">💎VIP' + (u.vipLevel || 1) + '</span>' : '<span class="tag gray">普通</span>'}</td>
+      <td><div class="av-cell">
+        ${VR.avatarHtml(u, 34)}
+        <button class="btn btn-sm" onclick="pickUserAvatar('${u.id}')">🖼️ 更换</button>
+      </div></td>
       <td><div class="flex">
         <input class="mini-input" type="number" value="1000" id="uc_${u.id}">
         <button class="btn btn-sm btn-gold" onclick="giveCoins('${u.id}')">+金币</button>
         <button class="btn btn-sm" onclick="setCharm('${u.id}')">设魅力</button>
         <button class="btn btn-sm" onclick="toggleVip('${u.id}', ${u.vip ? 'false' : 'true'})">${u.vip ? '取消VIP' : '设VIP'}</button>
-        <button class="btn btn-sm" onclick="pickUserAvatar('${u.id}')">🖼️ 头像</button>
+        <button class="btn btn-sm" onclick="editUser('${u.id}')">✏️ 资料</button>
         <button class="btn btn-sm" style="background:rgba(255,92,108,.2)" onclick="delUser('${u.id}','${VR.esc(u.name)}')">删除</button>
       </div></td>
     </tr>`).join('');
@@ -427,6 +491,18 @@ async function delUser(uid, name) {
   if (!confirm('确定删除用户「' + name + '」？此操作不可恢复。')) return;
   const r = await api('clear-user', { userId: uid });
   if (r) { VR.toast('已删除', 'ok'); load(); }
+}
+/** 改昵称 / 性别（服务端 update-user 支持 name、gender、bio） */
+async function editUser(uid) {
+  const cur = (DATA.users || []).find(u => u.id === uid);
+  if (!cur) return;
+  const name = prompt('昵称（最长 20 字）', cur.name);
+  if (name === null) return;
+  const raw = prompt('性别：填 male（男）/ female（女）/ secret（保密）', cur.gender || 'secret');
+  if (raw === null) return;
+  const gender = ['male', 'female', 'secret'].includes(raw.trim()) ? raw.trim() : 'secret';
+  const r = await api('update-user', { userId: uid, name, gender });
+  if (r) { VR.toast('资料已更新', 'ok'); load(); }
 }
 async function renameRoom(rid) {
   const name = document.getElementById('rn_' + rid)?.value.trim();

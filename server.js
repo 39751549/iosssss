@@ -746,7 +746,18 @@ function handleAdmin(action, p, res) {
       saveStore(); return ok({ user: publicUser(u) });
     }
     case 'clear-user': {
-      delete store.users[p.userId]; saveStore(); return ok();
+      const uid = p.userId;
+      delete store.users[uid];
+      // 账号记录必须一起清 —— 只删 store.users 的话，被删的用户
+      // 用原来的账号密码还能重新登录，账号直接「复活」。
+      // 但 admin 账号要保护：删了管理员用户就再也进不去后台了。
+      if (uid && uid !== 'u_admin') {
+        for (const un of Object.keys(store.accounts || {})) {
+          const acc = store.accounts[un];
+          if (acc && acc.userId === uid) delete store.accounts[un];
+        }
+      }
+      saveStore(); return ok();
     }
     case 'delete-room': {
       if (store.rooms[p.roomId]) { delete store.rooms[p.roomId]; runtime.delete(p.roomId); saveStore(); }
