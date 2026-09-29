@@ -85,7 +85,7 @@ struct GiftSheet: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(
                                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .fill(Color.white.opacity(0.05))
+                                    .fill(Color(hex: "27436B").opacity(0.05))
                             )
                     }
                     .padding(.horizontal, 20)
@@ -191,7 +191,7 @@ struct GiftSheet: View {
                             RoundedRectangle(cornerRadius: 14, style: .continuous)
                                 .fill(selectedGiftId == g.id
                                       ? VRTheme.pink.opacity(0.18)
-                                      : Color.white.opacity(0.06))
+                                      : Color(hex: "27436B").opacity(0.06))
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -216,7 +216,7 @@ struct GiftSheet: View {
                     .font(.system(size: 20, weight: .medium))
                     .foregroundColor(VRTheme.text)
                     .frame(width: 40, height: 40)
-                    .background(Circle().fill(Color.white.opacity(0.1)))
+                    .background(Circle().fill(Color(hex: "27436B").opacity(0.1)))
             }
             .buttonStyle(.plain)
 
@@ -232,7 +232,7 @@ struct GiftSheet: View {
                     .font(.system(size: 20, weight: .medium))
                     .foregroundColor(VRTheme.text)
                     .frame(width: 40, height: 40)
-                    .background(Circle().fill(Color.white.opacity(0.1)))
+                    .background(Circle().fill(Color(hex: "27436B").opacity(0.1)))
             }
             .buttonStyle(.plain)
         }

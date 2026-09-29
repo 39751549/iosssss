@@ -123,7 +123,7 @@ struct VRButtonStyle: ButtonStyle {
         case .primary: VRTheme.brandGradient
         case .pink:    VRTheme.pinkGradient
         case .gold:    VRTheme.goldGradient
-        case .plain:   Color.white.opacity(0.1)
+        case .plain:   Color.white.opacity(0.85)
         }
     }
 
@@ -163,14 +163,14 @@ struct VRIconButton: View {
 
     private var bg: some View {
         Group {
-            if danger { VRTheme.red.opacity(0.24) }
+            if danger { VRTheme.red.opacity(0.18) }
             else if active { VRTheme.brandGradient }
-            else { Color.black.opacity(0.32) }
+            else { Color.white.opacity(0.9) }
         }
     }
 
     private var strokeColor: Color {
-        if danger { VRTheme.red.opacity(0.5) }
+        if danger { VRTheme.red.opacity(0.45) }
         else if active { .clear }
         else { VRTheme.border }
     }
@@ -226,7 +226,7 @@ struct VRTextField: View {
         .frame(height: 48)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.white.opacity(0.09))
+                .fill(Color.white.opacity(0.88))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -272,7 +272,7 @@ struct VRBadge: View {
         case .vip:    VRTheme.goldGradient
         case .host:   LinearGradient(colors: [Color(hex: "6BD5FF"), Color(hex: "3B8CFF")],
                                      startPoint: .topLeading, endPoint: .bottomTrailing)
-        case .normal: Color.white.opacity(0.08)
+        case .normal: Color(hex: "27436B").opacity(0.08)
         case .green:  VRTheme.green.opacity(0.16)
         }
     }
@@ -313,31 +313,33 @@ struct VRToastView: View {
     var body: some View {
         Text(message.text)
             .font(.system(size: 13.5, weight: .medium))
-            .foregroundColor(VRTheme.text)
+            .foregroundColor(fgColor)
             .padding(.horizontal, 18)
             .padding(.vertical, 11)
-            .background(background)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color.white.opacity(0.97))
+            )
             .overlay(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(borderColor, lineWidth: 1)
+                    .strokeBorder(borderColor, lineWidth: 1.5)
             )
-            .shadow(color: .black.opacity(0.4), radius: 16, y: 6)
+            .shadow(color: VRTheme.text.opacity(0.16), radius: 14, y: 5)
             .padding(.horizontal, 40)
     }
 
-    private var background: Color {
+    private var fgColor: Color {
         switch message.kind {
-        case .error: return Color(hex: "3C101A")
-        case .success: return Color(hex: "0C3026")
-        case .info: return Color(hex: "141A34")
+        case .error: return VRTheme.red
+        case .success: return VRTheme.green
+        case .info: return VRTheme.text
         }
     }
 
     private var borderColor: Color {
         switch message.kind {
-        case .error: return VRTheme.red.opacity(0.6)
-        case .success: return VRTheme.green.opacity(0.55)
+        case .error: return VRTheme.red.opacity(0.55)
+        case .success: return VRTheme.green.opacity(0.5)
         case .info: return VRTheme.border
         }
     }
@@ -359,7 +361,7 @@ struct VRSheet<Content: View>: View {
             VStack(spacing: 0) {
                 // 把手
                 Capsule()
-                    .fill(Color.white.opacity(0.24))
+                    .fill(Color(hex: "27436B").opacity(0.22))
                     .frame(width: 38, height: 4)
                     .padding(.top, 8)
                     .padding(.bottom, 14)
@@ -389,7 +391,7 @@ struct VRSheet<Content: View>: View {
             }
             .frame(maxHeight: UIScreen.main.bounds.height * 0.84)
             .background(
-                Color(hex: "121936")
+                Color.white
                     .clipShape(RoundedCorner(radius: 22, corners: [.topLeft, .topRight]))
                     .ignoresSafeArea(edges: .bottom)
             )
@@ -449,7 +451,7 @@ struct VRSegmentedControl<T: Hashable>: View {
         .padding(4)
         .background(
             RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .fill(Color.white.opacity(0.07))
+                .fill(Color(hex: "27436B").opacity(0.06))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 13, style: .continuous)

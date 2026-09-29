@@ -55,7 +55,7 @@ struct CreateRoomSheet: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(Color.white.opacity(0.05))
+                                .fill(Color(hex: "27436B").opacity(0.05))
                         )
                 }
                 .padding(20)
@@ -88,10 +88,10 @@ struct BackgroundOption: View {
 
                 Text(bg.label)
                     .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(VRTheme.text)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 4)
-                    .background(Color.black.opacity(0.42))
+                    .background(Color.white.opacity(0.78))
 
                 if selected {
                     VStack {
@@ -167,7 +167,7 @@ struct VipSheet: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color.white.opacity(0.05))
+                        .fill(Color(hex: "27436B").opacity(0.05))
                 )
 
                 Spacer()

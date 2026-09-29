@@ -51,7 +51,7 @@ struct RoomSettingsSheet: View {
                             .frame(height: 52)
                             .background(
                                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .fill(Color.white.opacity(0.08))
+                                    .fill(Color(hex: "27436B").opacity(0.08))
                             )
                             .overlay(
                                 RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -144,7 +144,7 @@ struct RoomSettingsSheet: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(
                                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .fill(Color.white.opacity(0.05))
+                                    .fill(Color(hex: "27436B").opacity(0.05))
                             )
                     }
 

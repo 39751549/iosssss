@@ -135,7 +135,7 @@ struct MemberSheet: View {
         .padding(10)
         .background(
             RoundedRectangle(cornerRadius: 15, style: .continuous)
-                .fill(Color.white.opacity(0.06))
+                .fill(Color(hex: "27436B").opacity(0.06))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 15, style: .continuous)
@@ -289,7 +289,7 @@ struct UserCardSheet: View {
         .padding(.vertical, 11)
         .background(
             RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .fill(Color.white.opacity(0.06))
+                .fill(Color(hex: "27436B").opacity(0.06))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 13, style: .continuous)

@@ -108,7 +108,7 @@ struct MusicSheet: View {
                                     if tab == t {
                                         Capsule().fill(VRTheme.brandGradient)
                                     } else {
-                                        Capsule().fill(Color.white.opacity(0.07))
+                                        Capsule().fill(Color(hex: "27436B").opacity(0.07))
                                     }
                                 }
                             )
@@ -153,7 +153,7 @@ struct MusicSheet: View {
                 .frame(height: 44)
                 .background(
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color.white.opacity(0.08))
+                        .fill(Color(hex: "27436B").opacity(0.08))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -224,7 +224,7 @@ struct MusicSheet: View {
                 ZStack {
                     RoundedRectangle(cornerRadius: 11, style: .continuous)
                         .fill(isCurrent ? VRTheme.brandGradient : LinearGradient(
-                            colors: [Color.white.opacity(0.1), Color.white.opacity(0.06)],
+                            colors: [Color(hex: "27436B").opacity(0.1), Color(hex: "27436B").opacity(0.06)],
                             startPoint: .topLeading, endPoint: .bottomTrailing))
                         .frame(width: 40, height: 40)
                     Text(isCurrent ? "🔊" : "🎵").font(.system(size: 17))
@@ -289,7 +289,7 @@ struct MusicSheet: View {
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 15, style: .continuous)
-                .fill(isCurrent ? VRTheme.brand.opacity(0.14) : Color.white.opacity(0.06))
+                .fill(isCurrent ? VRTheme.brand.opacity(0.14) : Color(hex: "27436B").opacity(0.06))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 15, style: .continuous)
@@ -403,14 +403,14 @@ struct MusicSheet: View {
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundColor(VRTheme.textMute)
                                 .frame(width: 34, height: 34)
-                                .background(Circle().fill(Color.white.opacity(0.07)))
+                                .background(Circle().fill(Color(hex: "27436B").opacity(0.07)))
                         }
                         .buttonStyle(.plain)
                     }
                     .padding(11)
                     .background(
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(isCurrent ? VRTheme.brand.opacity(0.14) : Color.white.opacity(0.06))
+                            .fill(isCurrent ? VRTheme.brand.opacity(0.14) : Color(hex: "27436B").opacity(0.06))
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -470,7 +470,7 @@ struct MusicSheet: View {
         HStack(spacing: 10) {
             ZStack {
                 RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .fill(Color.white.opacity(0.08))
+                    .fill(Color(hex: "27436B").opacity(0.08))
                     .frame(width: 40, height: 40)
                 Text(showDate ? "🕘" : "⭐").font(.system(size: 16))
             }
@@ -515,14 +515,14 @@ struct MusicSheet: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(VRTheme.textMute)
                     .frame(width: 34, height: 34)
-                    .background(Circle().fill(Color.white.opacity(0.07)))
+                    .background(Circle().fill(Color(hex: "27436B").opacity(0.07)))
             }
             .buttonStyle(.plain)
         }
         .padding(11)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.white.opacity(0.06))
+                .fill(Color(hex: "27436B").opacity(0.06))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -547,7 +547,7 @@ struct MusicSheet: View {
             // 进度条
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    Capsule().fill(Color.white.opacity(0.1))
+                    Capsule().fill(Color(hex: "27436B").opacity(0.1))
                     Capsule()
                         .fill(cache.usedFraction > 0.9
                               ? LinearGradient(colors: [VRTheme.red, Color(hex: "FF8A5B")],
@@ -573,7 +573,7 @@ struct MusicSheet: View {
         .padding(13)
         .background(
             RoundedRectangle(cornerRadius: 15, style: .continuous)
-                .fill(Color.white.opacity(0.06))
+                .fill(Color(hex: "27436B").opacity(0.06))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 15, style: .continuous)
@@ -593,7 +593,7 @@ struct MusicSheet: View {
             .padding(.vertical, 26)
             .background(
                 RoundedRectangle(cornerRadius: 15, style: .continuous)
-                    .fill(Color.white.opacity(0.04))
+                    .fill(Color(hex: "27436B").opacity(0.045))
             )
     }
 

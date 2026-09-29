@@ -15,12 +15,12 @@ struct LobbyView: View {
     var body: some View {
         ZStack {
             LinearGradient(
-                colors: [Color(hex: "3B2E8F"), Color(hex: "171B45"), Color(hex: "080B1A")],
+                colors: [Color(hex: "D6EEFF"), Color(hex: "EAF6FF"), Color(hex: "FFF4E8")],
                 startPoint: .top, endPoint: .bottom
             )
             .ignoresSafeArea()
             .overlay(
-                RadialGradient(colors: [VRTheme.brand.opacity(0.35), .clear],
+                RadialGradient(colors: [Color(hex: "FFD9EC").opacity(0.45), .clear],
                                center: .init(x: 0.2, y: 0.05), startRadius: 0, endRadius: 340)
                 .ignoresSafeArea()
             )
@@ -126,7 +126,7 @@ struct LobbyView: View {
         .padding(.vertical, 11)
         .background(
             RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .fill(Color.white.opacity(0.06))
+                .fill(Color(hex: "27436B").opacity(0.06))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 13, style: .continuous)
@@ -181,7 +181,7 @@ struct LobbyView: View {
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 3)
                                 .background(
-                                    Capsule().fill(room.count > 0 ? VRTheme.green.opacity(0.16) : Color.white.opacity(0.08))
+                                    Capsule().fill(room.count > 0 ? VRTheme.green.opacity(0.16) : Color(hex: "27436B").opacity(0.08))
                                 )
                         }
 
@@ -215,7 +215,7 @@ struct LobbyView: View {
                                     .frame(maxWidth: .infinity, minHeight: 42)
                                     .background(
                                         RoundedRectangle(cornerRadius: 13, style: .continuous)
-                                            .fill(Color.white.opacity(0.1))
+                                            .fill(Color(hex: "27436B").opacity(0.1))
                                     )
                                     .overlay(
                                         RoundedRectangle(cornerRadius: 13, style: .continuous)
@@ -270,7 +270,7 @@ struct LobbyView: View {
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 15, style: .continuous)
-                .fill(Color.white.opacity(0.06))
+                .fill(Color(hex: "27436B").opacity(0.06))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 15, style: .continuous)
@@ -359,13 +359,13 @@ struct LobbyView: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 .background(
-                    Capsule().fill(room.count > 0 ? VRTheme.green.opacity(0.16) : Color.white.opacity(0.08))
+                    Capsule().fill(room.count > 0 ? VRTheme.green.opacity(0.16) : Color(hex: "27436B").opacity(0.08))
                 )
         }
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 15, style: .continuous)
-                .fill(Color.white.opacity(0.06))
+                .fill(Color(hex: "27436B").opacity(0.06))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 15, style: .continuous)

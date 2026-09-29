@@ -54,7 +54,7 @@ struct ProfileEditSheet: View {
                                     .frame(height: 36)
                                     .background(
                                         RoundedRectangle(cornerRadius: 11, style: .continuous)
-                                            .fill(Color.white.opacity(0.1))
+                                            .fill(Color(hex: "27436B").opacity(0.1))
                                     )
                                     .overlay(
                                         RoundedRectangle(cornerRadius: 11, style: .continuous)
@@ -73,7 +73,7 @@ struct ProfileEditSheet: View {
                                     .frame(height: 36)
                                     .background(
                                         RoundedRectangle(cornerRadius: 11, style: .continuous)
-                                            .fill(Color.white.opacity(0.1))
+                                            .fill(Color(hex: "27436B").opacity(0.1))
                                     )
                                     .overlay(
                                         RoundedRectangle(cornerRadius: 11, style: .continuous)

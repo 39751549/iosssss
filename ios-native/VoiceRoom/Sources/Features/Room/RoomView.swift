@@ -94,7 +94,7 @@ struct RoomView: View {
                     .font(.system(size: 15, weight: .bold))
                     .foregroundColor(VRTheme.text)
                     .frame(width: 36, height: 36)
-                    .background(Circle().fill(Color.black.opacity(0.3)))
+                    .background(Circle().fill(Color.white.opacity(0.85)))
             }
             .buttonStyle(.plain)
 
@@ -120,7 +120,7 @@ struct RoomView: View {
                 .padding(.horizontal, 12)
                 .frame(height: 36)
                 .frame(maxWidth: .infinity)
-                .background(Capsule().fill(Color.black.opacity(0.32)))
+                .background(Capsule().fill(Color.white.opacity(0.8)))
                 .overlay(Capsule().strokeBorder(VRTheme.border, lineWidth: 1))
             }
             .buttonStyle(.plain)
@@ -275,7 +275,7 @@ struct RoomView: View {
                     .background(
                         Group {
                             if app.micEnabled { VRTheme.green.opacity(0.28) }
-                            else { Color.black.opacity(0.36) }
+                            else { Color.white.opacity(0.88) }
                         }
                     )
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -311,7 +311,7 @@ struct RoomView: View {
             .frame(height: 44)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.black.opacity(0.36))
+                    .fill(Color.white.opacity(0.9))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -325,7 +325,7 @@ struct RoomView: View {
         .padding(.top, 8)
         .padding(.bottom, max(8, safeBottom))
         .background(
-            LinearGradient(colors: [.clear, Color.black.opacity(0.32)],
+            LinearGradient(colors: [.clear, Color.white.opacity(0.85)],
                            startPoint: .top, endPoint: .bottom)
         )
     }
@@ -387,7 +387,7 @@ struct SeatCell: View {
                         VRAvatarFull(user: member.user, size: 52)
                             .overlay(
                                 Circle().strokeBorder(
-                                    isMine ? VRTheme.brand : Color.white.opacity(0.28),
+                                    isMine ? VRTheme.brand : Color(hex: "27436B").opacity(0.18),
                                     lineWidth: isMine ? 2 : 1.4
                                 )
                             )
@@ -404,10 +404,10 @@ struct SeatCell: View {
                     } else {
                         ZStack {
                             Circle()
-                                .fill(Color.white.opacity(0.07))
+                                .fill(Color(hex: "27436B").opacity(0.07))
                                 .frame(width: 52, height: 52)
                             Circle()
-                                .strokeBorder(Color.white.opacity(0.2),
+                                .strokeBorder(Color(hex: "27436B").opacity(0.22),
                                               style: StrokeStyle(lineWidth: 1.4, dash: [4, 3]))
                                 .frame(width: 52, height: 52)
                             Image(systemName: "plus")
@@ -469,8 +469,8 @@ struct HostSeatCell: View {
                                 .opacity(member.muted ? 0.72 : 1)
                         } else {
                             ZStack {
-                                Circle().fill(Color.white.opacity(0.08))
-                                Circle().strokeBorder(Color.white.opacity(0.22),
+                                Circle().fill(Color(hex: "27436B").opacity(0.08))
+                                Circle().strokeBorder(Color(hex: "27436B").opacity(0.24),
                                                       style: StrokeStyle(lineWidth: 1.4, dash: [4, 3]))
                                 Image(systemName: "plus")
                                     .font(.system(size: 18, weight: .medium))
@@ -482,7 +482,7 @@ struct HostSeatCell: View {
                     .frame(width: 70, height: 70)
                     .overlay(
                         Circle().strokeBorder(
-                            isMine ? VRTheme.brand : Color.white.opacity(0.3),
+                            isMine ? VRTheme.brand : Color(hex: "27436B").opacity(0.18),
                             lineWidth: isMine ? 2 : 1.2
                         )
                     )
@@ -519,7 +519,7 @@ struct HostSeatCell: View {
                 }
                 .padding(.horizontal, 9)
                 .padding(.vertical, 3.5)
-                .background(Capsule().fill(Color.black.opacity(0.32)))
+                .background(Capsule().fill(Color.white.opacity(0.8)))
                 .overlay(Capsule().strokeBorder(VRTheme.border, lineWidth: 1))
             }
         }
@@ -545,7 +545,7 @@ struct ChatRow: View {
                 .foregroundColor(VRTheme.textMute)
                 .padding(.horizontal, 9)
                 .padding(.vertical, 4)
-                .background(Capsule().fill(Color.black.opacity(0.24)))
+                .background(Capsule().fill(Color.white.opacity(0.6)))
                 .frame(maxWidth: .infinity, alignment: .center)
         } else {
             HStack(alignment: .top, spacing: 8) {
@@ -574,7 +574,7 @@ struct ChatRow: View {
                         .padding(.vertical, 7)
                         .background(
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(Color.black.opacity(0.3))
+                                .fill(Color.white.opacity(0.75))
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: 12, style: .continuous)

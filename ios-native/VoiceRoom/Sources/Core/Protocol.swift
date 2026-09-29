@@ -52,7 +52,8 @@ final class ServerStore: ObservableObject {
 // MARK: - 消息协议（与服务端 server.js 严格对应）
 
 enum VRClientMessage {
-    case auth(userId: String, name: String?, avatar: String?, gender: Gender?, bio: String?)
+    /// 账号密码登录（新账号自动注册）
+    case auth(username: String, password: String)
     case profileUpdate(userId: String, name: String?, avatar: String?, gender: Gender?, bio: String?)
     case vipLogin(userId: String, code: String)
     case roomCreate(userId: String, name: String, background: String)
@@ -84,13 +85,8 @@ enum VRClientMessage {
 
     var payload: [String: Any] {
         switch self {
-        case let .auth(userId, name, avatar, gender, bio):
-            var profile: [String: Any] = [:]
-            if let name { profile["name"] = name }
-            if let avatar { profile["avatar"] = avatar }
-            if let gender { profile["gender"] = gender.rawValue }
-            if let bio { profile["bio"] = bio }
-            return ["type": "auth", "userId": userId, "profile": profile]
+        case let .auth(username, password):
+            return ["type": "auth", "username": username, "password": password]
 
         case let .profileUpdate(userId, name, avatar, gender, bio):
             var patch: [String: Any] = [:]

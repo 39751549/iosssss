@@ -64,14 +64,14 @@ struct RootView: View {
                 VStack {
                     Spacer()
                     HStack(spacing: 8) {
-                        ProgressView().tint(.white).scaleEffect(0.8)
+                        ProgressView().tint(VRTheme.brand).scaleEffect(0.8)
                         Text("正在连接服务器…")
                             .font(.system(size: 13))
                             .foregroundColor(VRTheme.textDim)
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
-                    .background(Capsule().fill(Color.black.opacity(0.45)))
+                    .background(Capsule().fill(Color.white.opacity(0.9)))
                     .padding(.bottom, 30)
                 }
             }
@@ -100,10 +100,10 @@ struct FloatingRoomBall: View {
     var body: some View {
         ZStack {
             Circle()
-                .fill(Color.black.opacity(0.42))
+                .fill(Color.white.opacity(0.72))
                 .background(.ultraThinMaterial, in: Circle())
                 .overlay(Circle().strokeBorder(speakingCount > 0 ? VRTheme.green.opacity(0.8) : VRTheme.border, lineWidth: 1.4))
-                .shadow(color: speakingCount > 0 ? VRTheme.green.opacity(0.35) : .black.opacity(0.3), radius: 10, y: 3)
+                .shadow(color: speakingCount > 0 ? VRTheme.green.opacity(0.35) : VRTheme.text.opacity(0.18), radius: 10, y: 3)
 
             VStack(spacing: 1) {
                 Text("🎙️").font(.system(size: 21))
@@ -155,7 +155,7 @@ struct FloatingMusicWidget: View {
                 } label: {
                     ZStack {
                         Circle()
-                            .fill(Color.black.opacity(0.38))
+                            .fill(Color.white.opacity(0.75))
                             .background(.ultraThinMaterial, in: Circle())
                             .overlay(Circle().strokeBorder(player.isPlaying ? VRTheme.brand.opacity(0.7) : VRTheme.border, lineWidth: 1.2))
                         Text(player.isPlaying ? "⏸" : "▶️")
@@ -171,7 +171,7 @@ struct FloatingMusicWidget: View {
                     .lineLimit(1)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
-                    .background(Capsule().fill(Color.black.opacity(0.35)))
+                    .background(Capsule().fill(Color.white.opacity(0.85)))
                     .frame(width: 88)
                     .opacity(0.9)
             }
@@ -182,7 +182,3 @@ struct FloatingMusicWidget: View {
         }
     }
 }
-
-// build bump: v2 music panel + vip system
-
-// build bump 2: fix workflow yaml syntax

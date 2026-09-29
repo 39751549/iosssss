@@ -1,84 +1,87 @@
 import SwiftUI
 
-/// 登录页
+/// 登录页 —— 账号密码登岛
 struct LoginView: View {
     @EnvironmentObject var app: AppState
     @EnvironmentObject var serverStore: ServerStore
 
-    @State private var name = ""
-    @State private var gender: Gender = .secret
+    @State private var username = ""
+    @State private var password = ""
     @State private var vipCode = ""
     @State private var showServerSheet = false
 
-    @FocusState private var nameFocused: Bool
+    @FocusState private var fieldFocused: Bool
 
     var body: some View {
         ZStack {
-            // 背景
+            // 明亮卡通背景：天空蓝 → 奶油白 + 柔光晕
             LinearGradient(
-                colors: [Color(hex: "3B2E8F"), Color(hex: "171B45"), Color(hex: "080B1A")],
+                colors: [Color(hex: "BFE3FF"), Color(hex: "EAF6FF"), Color(hex: "FFF4E8")],
                 startPoint: .top, endPoint: .bottom
             )
             .ignoresSafeArea()
             .overlay(
-                RadialGradient(colors: [VRTheme.brand.opacity(0.45), .clear],
-                               center: .init(x: 0.25, y: 0.1), startRadius: 0, endRadius: 380)
+                RadialGradient(colors: [Color(hex: "FFD9EC").opacity(0.55), .clear],
+                               center: .init(x: 0.2, y: 0.08), startRadius: 0, endRadius: 360)
+                .ignoresSafeArea()
+            )
+            .overlay(
+                RadialGradient(colors: [Color(hex: "FFF3C4").opacity(0.5), .clear],
+                               center: .init(x: 0.9, y: 0.25), startRadius: 0, endRadius: 300)
                 .ignoresSafeArea()
             )
 
             ScrollView {
                 VStack(spacing: 0) {
                     // Logo
-                    VStack(spacing: 14) {
+                    VStack(spacing: 12) {
                         ZStack {
                             RoundedRectangle(cornerRadius: 26, style: .continuous)
                                 .fill(VRTheme.brandGradient)
                                 .frame(width: 84, height: 84)
-                                .shadow(color: VRTheme.brand.opacity(0.5), radius: 22, y: 10)
-                            Text("🎙️").font(.system(size: 40))
+                                .shadow(color: VRTheme.brand.opacity(0.35), radius: 18, y: 8)
+                            Text("🏝️").font(.system(size: 40))
                         }
-                        Text("语音房")
-                            .font(.system(size: 26, weight: .bold))
+                        Text("岛")
+                            .font(.system(size: 30, weight: .heavy))
                             .foregroundColor(VRTheme.text)
                         Text("和朋友一起开黑聊天 · 听歌 · 送礼")
                             .font(.system(size: 13.5))
                             .foregroundColor(VRTheme.textDim)
                     }
-                    .padding(.top, 60)
-                    .padding(.bottom, 30)
+                    .padding(.top, 56)
+                    .padding(.bottom, 28)
 
                     // 登录卡片
                     VRCard {
                         VStack(alignment: .leading, spacing: 14) {
-                            Text("👋 起个昵称就能进")
+                            Text("👋 登录小岛")
                                 .font(.system(size: 14, weight: .bold))
                                 .foregroundColor(VRTheme.text)
 
-                            VRTextField(placeholder: "输入昵称（最多 20 字）",
-                                        text: $name, maxLength: 20)
-                                .focused($nameFocused)
+                            VRTextField(placeholder: "账号（2-24 位字母/数字/中文/_）",
+                                        text: $username, maxLength: 24)
+                                .focused($fieldFocused)
+                                .submitLabel(.next)
+                                .onSubmit { fieldFocused = false }
+
+                            VRTextField(placeholder: "密码（新账号将自动注册）",
+                                        text: $password, maxLength: 64, secure: true)
                                 .submitLabel(.go)
                                 .onSubmit(doLogin)
 
-                            VRSegmentedControl(
-                                options: [(Gender.male, "♂ 男生"),
-                                          (.female, "♀ 女生"),
-                                          (.secret, "保密")],
-                                selection: $gender
-                            )
-
-                            Button("进入大厅", action: doLogin)
+                            Button("上岛 🏝", action: doLogin)
                                 .buttonStyle(VRButtonStyle(kind: .primary, fullWidth: true))
                                 .padding(.top, 4)
 
-                            Text("提示：昵称和资料只保存在你自己的手机上。")
+                            Text("提示：默认管理员账号 admin / admin")
                                 .font(.system(size: 12))
                                 .foregroundColor(VRTheme.textMute)
                                 .padding(11)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .background(
                                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .fill(Color.white.opacity(0.05))
+                                        .fill(VRTheme.brand.opacity(0.08))
                                 )
                         }
                     }
@@ -138,17 +141,19 @@ struct LoginView: View {
     }
 
     private func doLogin() {
-        let trimmed = name.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else {
-            app.showToast("请输入昵称", kind: .error)
+        let trimmed = username.trimmingCharacters(in: .whitespaces).lowercased()
+        let pass = password
+        guard let _ = trimmed.range(of: "^[0-9a-z_\\u{4E00}-\\u{9FA5}]{2,24}$",
+                                    options: .regularExpression) else {
+            app.showToast("账号需 2-24 位字母/数字/下划线/中文", kind: .error)
             return
         }
-        // 未连上时也允许发送：连接建立后 AppState 会补一次 auth
-        if !app.connection.isConnected {
-            app.showToast("正在连接服务器…", kind: .info)
+        guard !pass.isEmpty, pass.count <= 64 else {
+            app.showToast("请输入密码（最长 64 位）", kind: .error)
+            return
         }
-        app.login(name: trimmed, gender: gender)
-        nameFocused = false
+        app.login(username: trimmed, password: pass)
+        fieldFocused = false
     }
 }
 

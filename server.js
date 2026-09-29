@@ -120,7 +120,8 @@ const DEFAULT_CONFIG = {
   ]
 };
 
-let store = { users: {}, rooms: {}, config: JSON.parse(JSON.stringify(DEFAULT_CONFIG)), library: [] };
+let store = { users: {}, rooms: {}, accounts: {}, config: JSON.parse(JSON.stringify(DEFAULT_CONFIG)), library: [] };
+/* accounts: { [username]: { pass: sha256hex, userId } } */
 /* library: [{ id, title, artist, file, ext, size, duration?, uploadedAt }] */
 
 function loadStore() {
@@ -129,11 +130,19 @@ function loadStore() {
       const raw = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
       store.users = raw.users || {};
       store.rooms = raw.rooms || {};
+      store.accounts = (raw.accounts && typeof raw.accounts === 'object') ? raw.accounts : {};
       store.library = Array.isArray(raw.library) ? raw.library : [];
       store.config = Object.assign({}, DEFAULT_CONFIG, raw.config || {});
       if (!Array.isArray(store.config.giftList) || !store.config.giftList.length) store.config.giftList = DEFAULT_CONFIG.giftList;
     }
   } catch (e) { console.error('[store] 读取失败:', e.message); }
+  // 预置管理员账号 admin / admin
+  if (!store.accounts || typeof store.accounts !== 'object') store.accounts = {};
+  if (!store.accounts.admin) store.accounts.admin = { pass: sha256('admin'), userId: 'u_admin' };
+  // 校正历史脏昵称：u_admin 若被旧游客逻辑生成过「用户xx」随机名，改回 admin
+  if (store.users.u_admin && /^用户/.test(store.users.u_admin.name || '')) {
+    store.users.u_admin.name = 'admin';
+  }
 }
 let saveTimer = null;
 let saveWarned = false;
@@ -176,26 +185,66 @@ function sniffImageExt(buf) {
   if (buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') return 'webp';
   return null;
 }
+function sha256(s) {
+  return crypto.createHash('sha256').update(String(s), 'utf8').digest('hex');
+}
+
 function publicUser(u) {
   if (!u) return null;
-  return { id: u.id, name: u.name, avatar: u.avatar, gender: u.gender, bio: u.bio,
-           coins: u.coins, charm: u.charm, vip: u.vip, vipLevel: u.vipLevel };
+  // 防御式输出：任何字段缺失/脏类型都兜底，保证客户端解析永不失败
+  return { id: u.id, name: u.name || '用户', avatar: typeof u.avatar === 'string' ? u.avatar : '',
+           gender: (u.gender === 'male' || u.gender === 'female') ? u.gender : 'secret',
+           bio: typeof u.bio === 'string' ? u.bio : '',
+           coins: Number.isInteger(u.coins) ? u.coins : 0,
+           charm: Number.isInteger(u.charm) ? u.charm : 0,
+           vip: !!u.vip, vipLevel: Number.isInteger(u.vipLevel) ? u.vipLevel : 0 };
 }
 function ensureUser(id, patch) {
   let u = store.users[id];
   if (!u) {
     u = store.users[id] = {
-      id, name: '游客' + id.slice(-4), avatar: '', gender: 'secret', bio: '',
+      id, name: '用户' + id.slice(-4), avatar: '', gender: 'secret', bio: '',
       coins: 1000, charm: 0, vip: false, vipLevel: 0, createdAt: Date.now()
     };
   }
+  // 字段兜底：修复历史脏数据（曾因 patch 带 undefined 被 Object.assign 污染）
+  if (typeof u.name !== 'string' || !u.name) u.name = '用户' + id.slice(-4);
+  if (typeof u.avatar !== 'string') u.avatar = '';
+  if (typeof u.bio !== 'string') u.bio = '';
+  if (u.gender !== 'male' && u.gender !== 'female') u.gender = 'secret';
+  if (!Number.isInteger(u.coins)) u.coins = 1000;
+  if (!Number.isInteger(u.charm)) u.charm = 0;
+  if (typeof u.vip !== 'boolean') u.vip = false;
+  if (!Number.isInteger(u.vipLevel)) u.vipLevel = 0;
   if (patch) Object.assign(u, patch);
   saveStore();
   return u;
 }
 
+/* 账号表：username → { pass, userId }。密码只存 sha256。新账号自动注册。 */
+function ensureAccount(username, password) {
+  if (!store.accounts) store.accounts = {};
+  const acc = store.accounts[username];
+  if (acc) return { ok: acc.pass === sha256(password), userId: acc.userId, isNew: false };
+  const userId = 'u_' + username;
+  store.accounts[username] = { pass: sha256(password), userId };
+  return { ok: true, userId, isNew: true };
+}
+
 /* ================= 房间运行时 ================= */
 const runtime = new Map(); // roomId -> { members:Map, playlist:[], currentSong, playing, startedAt, chatLog:[] }
+/* 全局在线注册表：userId -> Set<ws>（大厅 + 房间都算在线，互踢用） */
+const onlineUsers = new Map();
+function addOnline(userId, ws) {
+  if (!onlineUsers.has(userId)) onlineUsers.set(userId, new Set());
+  onlineUsers.get(userId).add(ws);
+}
+function removeOnline(userId, ws) {
+  const s = onlineUsers.get(userId);
+  if (!s) return;
+  s.delete(ws);
+  if (s.size === 0) onlineUsers.delete(userId);
+}
 function getRuntime(roomId) {
   if (!runtime.has(roomId)) {
     runtime.set(roomId, { members: new Map(), playlist: [], currentSong: null, playing: false, startedAt: 0, chatLog: [] });
@@ -638,15 +687,26 @@ function leaveRoom(clientId, roomId) {
   else pushSnapshot(roomId);
 }
 
-/** 同账号互踢：同一 userId 只保留最新连接，旧连接从所在房间移除并断开 */
+/** 同账号互踢：同一 userId 只保留最新连接（大厅挂机的也算在线），旧连接从所在房间移除并断开 */
 function kickExistingSessions(userId, exceptWs) {
   let kicked = 0;
+  // 1) 全局在线注册表（覆盖大厅挂机连接）
+  const sessions = onlineUsers.get(userId);
+  if (sessions) {
+    for (const old of [...sessions]) {
+      if (old === exceptWs) continue;
+      try { old.send(JSON.stringify({ type: 'room:kicked', data: { reason: '你的账号在其他地方登录了' } })); } catch {}
+      if (old.joinedRoom) leaveRoom(old.clientId, old.joinedRoom);
+      try { old.close(); } catch {}
+      removeOnline(userId, old);
+      kicked++;
+    }
+  }
+  // 2) 兜底：房间 runtime 里 userId 相同但未走注册表的残留会话
   for (const [roomId, rt] of runtime) {
     for (const m of [...rt.members.values()]) {
       if (m.userId === userId && m.ws !== exceptWs) {
-        try { m.ws.send(JSON.stringify({ type: 'room:kicked', data: { reason: '你的账号在其他地方登录了' } })); } catch {}
         try { m.ws.close(); } catch {}
-        // 同步移除，不依赖 close 事件，避免新会话进房时旧麦位还没释放
         leaveRoom(m.clientId, roomId);
         kicked++;
       }
@@ -668,16 +728,25 @@ wss.on('connection', (ws) => {
 
     switch (msg.type) {
       case 'auth': {
-        const userId = safeStr(msg.userId, 40) || uid();
-        const patch = msg.profile ? {
-          name: safeStr(msg.profile.name, 20) || undefined,
-          avatar: typeof msg.profile.avatar === 'string' ? msg.profile.avatar.slice(0, 800000) : undefined,
-          gender: ['male', 'female', 'secret'].includes(msg.profile.gender) ? msg.profile.gender : undefined,
-          bio: typeof msg.profile.bio === 'string' ? safeStr(msg.profile.bio, 60) : undefined
-        } : null;
-        const user = ensureUser(userId, patch);
-        // 同账号互踢：新会话顶掉旧会话，保证"一人一连接"（在线列表不再重复）
+        // 账号密码登录：新账号自动注册，老账号校验密码（sha256），同账号多端互踢
+        const username = String(msg.username || '').trim().toLowerCase();
+        const password = typeof msg.password === 'string' ? msg.password : '';
+        if (!/^[0-9a-z_\u4e00-\u9fa5]{2,24}$/.test(username)) {
+          return reply({ type: 'error', msg: '账号需 2-24 位字母/数字/下划线/中文' });
+        }
+        if (!password || password.length > 64) {
+          return reply({ type: 'error', msg: '请输入密码（最长 64 位）' });
+        }
+        const acc = ensureAccount(username, password);
+        if (!acc.ok) return reply({ type: 'error', msg: '密码错误' });
+        const userId = acc.userId;
+        // 新账号以账号为昵称；老用户保留已改过的名片昵称
+        const user = ensureUser(userId, acc.isNew ? { name: username } : null);
+        // 注册到在线表，再踢旧会话（覆盖大厅挂机的连接）
+        ws.authUserId = userId;
+        addOnline(userId, ws);
         kickExistingSessions(userId, ws);
+        saveStore();
         return reply({ type: 'auth:ok', data: { userId, user: publicUser(user), giftList: store.config.giftList } });
       }
 
@@ -772,6 +841,7 @@ wss.on('connection', (ws) => {
         if (!room) return reply({ type: 'join:fail', msg: '房间不存在，请检查房间号' });
 
         clientId = uid('c'); joinedRoom = room.id;
+        ws.clientId = clientId; ws.joinedRoom = joinedRoom; // 互踢移出房间用
         const rt = getRuntime(room.id);
         const isOwner = room.ownerId === userId;
         const used = new Set([...rt.members.values()].map(m => m.seat));
@@ -800,6 +870,7 @@ wss.on('connection', (ws) => {
       case 'room:leave':
         if (joinedRoom) leaveRoom(clientId, joinedRoom);
         joinedRoom = null; clientId = null;
+        ws.joinedRoom = null; ws.clientId = null;
         break;
 
       case 'room:rename': {
@@ -1064,7 +1135,10 @@ wss.on('connection', (ws) => {
     }
   });
 
-  ws.on('close', () => { if (joinedRoom) leaveRoom(clientId, joinedRoom); });
+  ws.on('close', () => {
+    if (ws.authUserId) removeOnline(ws.authUserId, ws);
+    if (joinedRoom) leaveRoom(clientId, joinedRoom);
+  });
   ws.on('error', () => {});
 });
 

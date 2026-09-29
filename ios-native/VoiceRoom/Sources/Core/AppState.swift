@@ -10,6 +10,12 @@ final class AppState: ObservableObject {
     @Published var userId: String = ""
     @Published var me: VRUser?
     @Published var isLoggedIn: Bool = false
+    /// 已保存的登录凭据（登录成功后落盘，用于自动登录）
+    private var savedUsername = ""
+    private var savedPassword = ""
+    /// 本次输入、等待服务端确认的凭据（连接晚于点登录时补发用）
+    private var pendingUsername = ""
+    private var pendingPassword = ""
 
     // MARK: 大厅
     @Published var roomList: [VRRoomSummary] = []
@@ -61,16 +67,15 @@ final class AppState: ObservableObject {
         voice.onSpeakingChanged = { [weak self] ids in
             self?.speakingIds = ids
         }
-        // 连接建立后自动登录（一键登录 / 断线重连恢复会话）
+        // 连接建立后自动登录（有已保存/待确认凭据时；断线重连恢复会话）
         connection.$status
             .receive(on: DispatchQueue.main)
             .sink { [weak self] st in
                 guard let self else { return }
                 guard case .connected = st else { return }
-                guard !self.userId.isEmpty else { return }
                 self.silentAuth()
                 // 重连后若之前在房间里，自动回到房间
-                if self.inRoom, !self.lastRoomId.isEmpty {
+                if self.isLoggedIn, self.inRoom, !self.lastRoomId.isEmpty {
                     self.connection.send(.roomJoin(userId: self.userId, roomId: self.lastRoomId, no: nil))
                 }
             }
@@ -80,36 +85,42 @@ final class AppState: ObservableObject {
     // MARK: - 登录
 
     func start() {
-        loadIdentity()
+        savedUsername = UserDefaults.standard.string(forKey: "vr_username") ?? ""
+        savedPassword = UserDefaults.standard.string(forKey: "vr_password") ?? ""
+        if let cached = LocalStore.loadUser() { me = cached }
         connection.connect()
     }
 
-    private func loadIdentity() {
-        let saved = UserDefaults.standard.string(forKey: "vr_userId")
-        if let saved, !saved.isEmpty {
-            userId = saved
-            if let cached = LocalStore.loadUser() { me = cached }
-        }
+    /// 登录（账号密码；新账号服务端自动注册）
+    func login(username: String, password: String) {
+        let clean = username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        pendingUsername = clean
+        pendingPassword = password
+        // 未连上时也允许发送：连接建立后 AppState 会补一次 auth
+        connection.send(.auth(username: clean, password: password))
     }
 
-    /// 登录（首次或更新资料）
-    /// 账号名称登录：昵称即账号（同一昵称在任何设备上都是同一账号）
-    func login(name: String, gender: Gender) {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        if userId.isEmpty {
-            let clean = trimmed.lowercased()
-                .replacingOccurrences(of: " ", with: "")
-            userId = ("n" + clean).prefix(40).description
-            UserDefaults.standard.set(userId, forKey: "vr_userId")
-        }
-        UserDefaults.standard.set(trimmed, forKey: "vr_name")
-        connection.send(.auth(userId: userId, name: trimmed, avatar: nil, gender: gender, bio: nil))
-    }
-
-    /// 静默恢复登录（已有身份时）
+    /// 静默登录：优先用刚输入待确认的凭据，其次已保存凭据
     func silentAuth() {
-        guard !userId.isEmpty else { return }
-        connection.send(.auth(userId: userId, name: nil, avatar: nil, gender: nil, bio: nil))
+        let u = !pendingUsername.isEmpty ? pendingUsername : savedUsername
+        let p = !pendingPassword.isEmpty ? pendingPassword : savedPassword
+        guard !u.isEmpty, !p.isEmpty else { return }
+        connection.send(.auth(username: u, password: p))
+    }
+
+    /// 退出登录：清凭据并断开（回到登录页）
+    func logout() {
+        savedUsername = ""
+        savedPassword = ""
+        pendingUsername = ""
+        pendingPassword = ""
+        UserDefaults.standard.removeObject(forKey: "vr_username")
+        UserDefaults.standard.removeObject(forKey: "vr_password")
+        UserDefaults.standard.removeObject(forKey: "vr_userId")
+        isLoggedIn = false
+        userId = ""
+        leaveRoom()
+        connection.disconnect()
     }
 
     // MARK: - 消息分发
@@ -121,6 +132,15 @@ final class AppState: ObservableObject {
             me = user
             giftList = gifts
             isLoggedIn = true
+            // 登录成功：凭据落盘，下次自动登录
+            if !pendingUsername.isEmpty {
+                savedUsername = pendingUsername
+                savedPassword = pendingPassword
+                pendingUsername = ""
+                pendingPassword = ""
+                UserDefaults.standard.set(savedUsername, forKey: "vr_username")
+                UserDefaults.standard.set(savedPassword, forKey: "vr_password")
+            }
             UserDefaults.standard.set(uid, forKey: "vr_userId")
             LocalStore.saveUser(user)
             requestRoomList()
@@ -162,9 +182,18 @@ final class AppState: ObservableObject {
             }
 
         case let .roomKicked(reason):
-            // 同账号在其他设备登录，本会话被顶下线
+            // 同账号在其他设备登录，本会话被顶下线。
+            // 必须清凭据并停止重连，否则两边会互相挤下线形成死循环。
             showToast(reason, kind: .error)
             leaveRoom()
+            savedUsername = ""
+            savedPassword = ""
+            pendingUsername = ""
+            pendingPassword = ""
+            UserDefaults.standard.removeObject(forKey: "vr_username")
+            UserDefaults.standard.removeObject(forKey: "vr_password")
+            isLoggedIn = false
+            connection.disconnect()
 
         case let .joinOK(cid, roomId, _):
             clientId = cid
