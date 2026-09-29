@@ -11,7 +11,6 @@ struct RoomView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var chatInput = ""
-    @State private var showGift = false
     @State private var showMusic = false
     @State private var showMembers = false
     @State private var showSettings = false
@@ -73,9 +72,8 @@ struct RoomView: View {
                 }
             }
         }
-        .sheet(isPresented: $showGift) {
-            GiftSheet(state: state, presetTarget: nil).environmentObject(app)
-        }
+        // 礼物入口统一收进用户名片（点麦位/点公屏头像/成员列表 → 名片里的「送礼物」），
+        // 底部工具栏不再放礼物按钮，所以这里也不需要礼物弹层
         .sheet(isPresented: $showMusic) {
             MusicSheet(state: state).environmentObject(app)
         }
@@ -535,69 +533,74 @@ struct RoomView: View {
     // MARK: - 底部工具栏
 
     private var bottomBar: some View {
-        HStack(spacing: 8) {
-            // 左下角：扬声器（前）+ 麦克风（后）
+        HStack(spacing: 9) {
+            // 最左侧：公屏输入框（**透明**，不铺任何底板/玻璃块）
+            chatField
+
+            // 右侧三个圆形开关：扬声器 → 麦克风 → 音乐
             //
             // 这里刻意用 SF Symbol 而不是 emoji：emoji 里「静音」只有 🔇（一个划掉的喇叭），
             // 麦克风关掉时显示 🔇 的话，两个按钮就长得一模一样，用户根本分不清哪个是哪个。
             // SF Symbol 有 mic.slash 这种明确的「麦克风静音」，语义一眼可辨。
-            HStack(spacing: 6) {
-                barIcon(app.speakerEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill",
-                        tint: app.speakerEnabled ? VRTheme.brand : nil,
-                        symbol: true) {
-                    app.toggleSpeaker()
-                }
-                barIcon(app.micEnabled ? "mic.fill" : "mic.slash.fill",
-                        tint: app.micEnabled ? VRTheme.green : nil,
-                        symbol: true) {
-                    app.toggleMic()
-                }
+            barIcon(app.speakerEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill",
+                    tint: app.speakerEnabled ? VRTheme.brand : nil,
+                    symbol: true) {
+                app.toggleSpeaker()
             }
-
-            // 礼物
-            barIcon("🎁") { showGift = true }
-
-            // 输入框
-            HStack(spacing: 6) {
-                TextField("说点什么…", text: $chatInput)
-                    .focused($chatFocused)
-                    .font(.system(size: 14))
-                    .foregroundColor(VRTheme.text)
-                    .submitLabel(.send)
-                    .onSubmit(sendChat)
-
-                if !chatInput.isEmpty {
-                    Button(action: sendChat) {
-                        Text("➤")
-                            .font(.system(size: 15))
-                            .foregroundColor(VRTheme.brand2)
-                    }
-                    .buttonStyle(.plain)
-                }
+            barIcon(app.micEnabled ? "mic.fill" : "mic.slash.fill",
+                    tint: app.micEnabled ? VRTheme.green : nil,
+                    symbol: true) {
+                app.toggleMic()
             }
-            .padding(.horizontal, 13)
-            .frame(height: 44)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(.ultraThinMaterial)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color.white.opacity(0.42))
-                    )
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.4), lineWidth: 1)
-            )
-
-            // 听歌
-            barIcon("🎵", tint: MusicPlayer.shared.isPlaying ? VRTheme.brand : nil) {
+            barIcon("music.note",
+                    tint: MusicPlayer.shared.isPlaying ? VRTheme.brand : nil,
+                    symbol: true) {
                 showMusic = true
             }
         }
         .padding(.horizontal, 12)
         .padding(.top, 8)
         .padding(.bottom, max(8, safeBottom))
+    }
+
+    /// 公屏输入框：**最左 + 完全透明**
+    ///
+    /// 透明之后的可读性靠"文字外发光"来兜（白色描边两层），
+    /// 这和折叠态音乐图标用的是同一套办法 —— 不在背景上贴任何不透明色块，
+    /// 但深浅背景都能看清。占位符是自己画的 Text，因为系统占位符的颜色改不动。
+    private var chatField: some View {
+        HStack(spacing: 4) {
+            ZStack(alignment: .leading) {
+                if chatInput.isEmpty {
+                    Text("说点什么…")
+                        .font(.system(size: 14.5, weight: .medium))
+                        .foregroundColor(VRTheme.text.opacity(0.5))
+                        .vrTextGlow()
+                        .allowsHitTesting(false)
+                }
+                TextField("", text: $chatInput)
+                    .focused($chatFocused)
+                    .font(.system(size: 14.5, weight: .medium))
+                    .foregroundColor(VRTheme.text)
+                    .tint(VRTheme.brand)
+                    .submitLabel(.send)
+                    .onSubmit(sendChat)
+                    .vrTextGlow()
+            }
+
+            if !chatInput.isEmpty {
+                Button(action: sendChat) {
+                    Image(systemName: "paperplane.fill")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(VRTheme.brand)
+                        .vrTextGlow()
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 44)
+        .frame(maxWidth: .infinity)
     }
 
     /// 底部栏图标：统一半透明玻璃底 + 白边，禁止不透明块状背景
@@ -1017,7 +1020,7 @@ struct VRCardTarget: Identifiable {
     var id: String { member.user.id.isEmpty ? member.clientId : member.user.id }
 }
 
-// MARK: - 悬浮音乐条的玻璃外壳（展开态用）
+// MARK: - 透明底上的文字可读性
 
 private extension View {
     /// 半透明毛玻璃 + 细描边 + 轻投影，保证在任何背景上都看得清
@@ -1036,5 +1039,16 @@ private extension View {
                     .strokeBorder(VRTheme.brand.opacity(0.35), lineWidth: 1)
             )
             .shadow(color: VRTheme.text.opacity(0.14), radius: 10, y: 4)
+    }
+
+    /// 白色外发光（两层）：给**没有底板**的文字/图标描一圈白边。
+    ///
+    /// 房间背景是照片/动图，明暗都可能有。透明文字只靠深色字在深背景上会糊掉，
+    /// 叠两层白色光晕（近的一层当描边、远的一层当扩散）就深浅通吃。
+    /// 折叠态的音乐图标用的也是这个思路。
+    func vrTextGlow() -> some View {
+        self
+            .shadow(color: .white.opacity(0.95), radius: 1.6)
+            .shadow(color: .white.opacity(0.7), radius: 4)
     }
 }

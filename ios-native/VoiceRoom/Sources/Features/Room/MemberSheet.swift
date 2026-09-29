@@ -7,7 +7,6 @@ struct MemberSheet: View {
 
     @EnvironmentObject var app: AppState
     @Environment(\.dismiss) private var dismiss
-    @State private var giftTarget: VRMember?
     /// 名片（点成员行）—— 挂在成员列表自己身上，避免"收起列表 + 弹出名片"两个 sheet 打架
     @State private var cardTarget: VRCardTarget?
 
@@ -69,9 +68,8 @@ struct MemberSheet: View {
             }
         }
         .vrSheet(medium: true, large: true)
-        .sheet(item: $giftTarget) { m in
-            GiftSheet(state: state, presetTarget: m.clientId).environmentObject(app)
-        }
+        // 礼物入口统一收进名片：点成员行 → 名片里有「送礼物」。
+        // 列表行上不再单独放礼物按钮，避免"同一个动作两个入口"，也省掉一次多余的弹层。
         // 名片挂在成员列表内部：列表不收起，也就不会出现"一个 sheet 收起、另一个弹出"的打架
         .sheet(item: $cardTarget) { t in
             UserCardSheet(member: t.member, state: state).environmentObject(app)
@@ -126,16 +124,10 @@ struct MemberSheet: View {
 
             Spacer()
 
-            Button {
-                giftTarget = m
-            } label: {
-                Text("🎁")
-                    .font(.system(size: 15))
-                    .frame(width: 36, height: 36)
-                    .background(Circle().fill(VRTheme.pink.opacity(0.18)))
-                    .overlay(Circle().strokeBorder(VRTheme.pink.opacity(0.5), lineWidth: 1))
-            }
-            .buttonStyle(.plain)
+            // 只留一个"展开"指示，礼物入口在名片里（点这一行就进去了）
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundColor(VRTheme.textMute)
         }
         .padding(10)
         .background(
@@ -159,6 +151,46 @@ struct MemberSheet: View {
 
 // MARK: - 用户名片弹窗
 
+/// 名片的两种形态：
+/// - `compact`：小名片（封面 + 头像/名字/等级 + 「查看完整主页」「送礼物」两个大圆按钮）
+/// - `full`：完整主页（在小名片下方继续展开数据、VIP 晋升进度、签名与次级操作）
+enum VRCardMode { case compact, full }
+
+/// 切换 sheet 高度档位：compact ↔ medium，full ↔ large。
+///
+/// 为什么用「撑大同一张 sheet」而不是再叠一层 sheet：
+/// 名片本身可能已经是第 2 层弹层（房间 → 成员列表 → 名片），
+/// 再往上叠第 3 层时，iOS 会因为「同一个时刻只允许一个 presentation 在动画中」而把新的丢掉，
+/// 表现就是「点了没反应」或者一闪而过。改成切换 detent 就没有这个问题。
+private struct VRCardDetentModifier: ViewModifier {
+
+    @Binding var mode: VRCardMode
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 16.0, *) {
+            content
+                // 小名片用一个**固定高度**而不是 .medium：
+                // .medium 是"半屏"，在 iPhone SE 这种小屏上只有 ~333pt，
+                // 而封面 + 两个大圆按钮至少要 350pt，会把按钮裁掉一截。
+                // 固定 378 能保证两个圆按钮完整露出，也不用用户滚一下才看得到。
+                .presentationDetents([.height(378), .large], selection: detent)
+                // 不显示系统把手：名片是自定义视觉（封面铺到顶），
+                // 一条灰色横杠压在封面上很突兀；收起/展开交给右上的箭头和 ✕。
+                .presentationDragIndicator(.hidden)
+        } else {
+            content
+        }
+    }
+
+    private var detent: Binding<PresentationDetent> {
+        Binding(
+            get: { mode == .full ? PresentationDetent.large : PresentationDetent.medium },
+            set: { mode = ($0 == PresentationDetent.large) ? .full : .compact }
+        )
+    }
+}
+
 struct UserCardSheet: View {
 
     let member: VRMember
@@ -167,121 +199,299 @@ struct UserCardSheet: View {
     @EnvironmentObject var app: AppState
     @Environment(\.dismiss) private var dismiss
     @State private var showGift = false
+    @State private var mode: VRCardMode = .compact
 
+    private var user: VRUser { member.user }
     private var isMe: Bool { member.clientId == app.clientId }
+    private var isHost: Bool { member.clientId == state.hostClientId }
+
+    /// 在房时长（分钟）。`joinedAt` 是服务端毫秒时间戳；
+    /// 0 表示这条成员记录是本地临时拼出来的（比如从公屏点自己），此时不显示这一项。
+    private var stayMinutes: Int? {
+        guard member.joinedAt > 0 else { return nil }
+        let ms = Date().timeIntervalSince1970 * 1000 - member.joinedAt
+        return max(0, Int(ms / 60000))
+    }
+
+    /// 封面高度 / 白色信息面板压住封面的高度
+    /// （两个数字连同下面面板的内边距，一起控制在 378pt 的固定高度内，见 VRCardDetentModifier）
+    private static let bannerHeight: CGFloat = 168
+    private static let panelOverlap: CGFloat = 22
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .top) {
             VRTheme.bg.ignoresSafeArea()
 
-            VStack(spacing: 0) {
-                // 顶部渐变头图
-                ZStack(alignment: .bottom) {
-                    LinearGradient(colors: VRTheme.background(for: state.room.background),
-                                   startPoint: .topLeading, endPoint: .bottomTrailing)
-                        .frame(height: 128)
-
-                    VRAvatarFull(user: member.user, size: 82)
-                        .overlay(
-                            Circle().strokeBorder(Color.white.opacity(0.9), lineWidth: 3)
-                        )
-                        .shadow(color: .black.opacity(0.4), radius: 14, y: 6)
-                        .offset(y: 40)
-
-                    HStack {
-                        Spacer()
-                        Button { dismiss() } label: {
-                            Text("✕")
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundColor(.white)
-                                .frame(width: 30, height: 30)
-                                .background(Circle().fill(Color.black.opacity(0.35)))
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 86)
+            ScrollView {
+                VStack(spacing: 0) {
+                    banner
+                    // 负 padding：让白面板整体上移压住封面底部。
+                    // 用负值时面板"绘制"的位置比它在 VStack 里占的槽位高，
+                    // 于是既产生了压边效果，又不会在底部多留一块空白。
+                    panel.padding(.top, -Self.panelOverlap)
                 }
-                .frame(height: 128)
-
-                ScrollView {
-                    VStack(spacing: 14) {
-                        // 名字
-                        VStack(spacing: 6) {
-                            HStack(spacing: 6) {
-                                Text(member.user.name)
-                                    .font(.system(size: 19, weight: .bold))
-                                    .foregroundColor(VRTheme.text)
-                                if member.user.vip {
-                                    VRBadge(kind: .vip, text: "👑 VIP\(member.user.vipLevel)")
-                                }
-                            }
-                            HStack(spacing: 7) {
-                                HStack(spacing: 2) {
-                                    VRGenderIcon(gender: member.user.gender)
-                                    Text(member.user.gender.label)
-                                }
-                                .font(.system(size: 12))
-                                .foregroundColor(VRTheme.textDim)
-                                if member.clientId == state.hostClientId {
-                                    VRBadge(kind: .host, text: "房主")
-                                }
-                                if member.seat >= 0 {
-                                    VRBadge(kind: .green, text: "\(member.seat + 1) 号麦")
-                                }
-                            }
-                        }
-                        .padding(.top, 30)
-
-                        if !member.user.bio.isEmpty {
-                            Text(member.user.bio)
-                                .font(.system(size: 13))
-                                .foregroundColor(VRTheme.textDim)
-                                .multilineTextAlignment(.center)
-                                .padding(.horizontal, 24)
-                        }
-
-                        // 数据
-                        HStack(spacing: 10) {
-                            statBox(title: "💰 金币", value: shortNum(member.user.coins), color: VRTheme.gold)
-                            statBox(title: "💖 魅力值", value: shortNum(member.user.charm), color: VRTheme.pink)
-                            statBox(title: "👑 会员",
-                                    value: member.user.vip ? "VIP\(member.user.vipLevel)" : "普通",
-                                    color: member.user.vip ? VRTheme.gold : VRTheme.textDim)
-                        }
-                        .padding(.horizontal, 20)
-
-                        // VIP 等级与刷礼物挂钩：展示晋升进度
-                        vipProgress
-
-                        // 操作
-                        VStack(spacing: 10) {
-                            if !isMe {
-                                Button("🎁 送礼物") { showGift = true }
-                                    .buttonStyle(VRButtonStyle(kind: .pink, fullWidth: true))
-                            }
-                            Button(isMe ? "✏️ 编辑我的名片" : "✉️ 打个招呼") {
-                                if isMe {
-                                    dismiss()
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                                        app.showToast("请在大厅「编辑名片」中修改")
-                                    }
-                                } else {
-                                    app.sendChat("@\(member.user.name) 你好呀 👋")
-                                    dismiss()
-                                }
-                            }
-                            .buttonStyle(VRButtonStyle(fullWidth: true))
-                        }
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 30)
-                    }
-                }
-                .vrScrollHidden()
+                .padding(.bottom, 26)
             }
+            .vrScrollHidden()
         }
-        .vrSheet()
+        .modifier(VRCardDetentModifier(mode: $mode))
         .sheet(isPresented: $showGift) {
             GiftSheet(state: state, presetTarget: member.clientId).environmentObject(app)
+        }
+    }
+
+    // MARK: 封面
+
+    private var banner: some View {
+        ZStack {
+            LinearGradient(colors: VRTheme.background(for: state.effectiveBackground),
+                           startPoint: .topLeading, endPoint: .bottomTrailing)
+
+            RadialGradient(colors: [Color.white.opacity(0.6), .clear],
+                           center: .init(x: 0.3, y: 0.2), startRadius: 0, endRadius: 230)
+
+            // 大头像：封面主体（和图片里那张人物立绘位置一致）
+            VRAvatarFull(user: user, size: 104)
+                .overlay(Circle().strokeBorder(Color.white.opacity(0.95), lineWidth: 3))
+                .shadow(color: .black.opacity(0.26), radius: 16, y: 8)
+
+            VStack {
+                HStack(alignment: .top) {
+                    closeButton
+                    Spacer()
+                    medals
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 12)
+        }
+        .frame(height: Self.bannerHeight)
+        .clipped()
+    }
+
+    private var closeButton: some View {
+        Button { dismiss() } label: {
+            Image(systemName: "xmark")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundColor(.white)
+                .frame(width: 30, height: 30)
+                .background(Circle().fill(Color.black.opacity(0.3)))
+                .overlay(Circle().strokeBorder(Color.white.opacity(0.35), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// 右上角勋章排（对应图片里名字上方那一排小圆章）
+    private var medals: some View {
+        HStack(spacing: 6) {
+            if user.vip {
+                medal("crown.fill", [VRTheme.gold, Color(hex: "FF8A3C")])
+            }
+            if isHost {
+                medal("house.fill", [Color(hex: "6BD5FF"), Color(hex: "3B8CFF")])
+            }
+            if member.seat >= 0 {
+                medal("mic.fill", [VRTheme.green, Color(hex: "22A97C")])
+            }
+            if isMe {
+                medal("person.fill", [Color(hex: "C7A6FF"), Color(hex: "8E5BFF")])
+            }
+        }
+    }
+
+    private func medal(_ symbol: String, _ colors: [Color]) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 12, weight: .bold))
+            .foregroundColor(.white)
+            .frame(width: 26, height: 26)
+            .background(
+                Circle().fill(LinearGradient(colors: colors, startPoint: .top, endPoint: .bottom))
+            )
+            .overlay(Circle().strokeBorder(Color.white, lineWidth: 1.8))
+            .shadow(color: .black.opacity(0.2), radius: 4, y: 2)
+    }
+
+    // MARK: 白色信息面板
+
+    private var panel: some View {
+        VStack(spacing: 0) {
+            identityRow
+            actionRow
+            if mode == .full { fullProfile }
+        }
+        .padding(.bottom, 24)
+        .frame(maxWidth: .infinity)
+        .background(Color.white)
+        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+    }
+
+    private var identityRow: some View {
+        HStack(spacing: 12) {
+            VRAvatarFull(user: user, size: 54)
+                .overlay(Circle().strokeBorder(Color.white, lineWidth: 2.5))
+                .shadow(color: .black.opacity(0.14), radius: 7, y: 3)
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 5) {
+                    Text(user.name)
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundColor(VRTheme.text)
+                        .lineLimit(1)
+                    VRGenderIcon(gender: user.gender)
+                    if user.vip {
+                        // 名字右侧的等级小章（图片里那个数字徽章的位置）
+                        Text("VIP\(user.vipLevel)")
+                            .font(.system(size: 10, weight: .heavy))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(VRTheme.brandGradient))
+                    }
+                }
+                subtitle
+            }
+
+            Spacer(minLength: 4)
+
+            Button { toggleFull() } label: {
+                HStack(spacing: 3) {
+                    if mode == .compact {
+                        Text("主页")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    Image(systemName: mode == .full ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 12, weight: .bold))
+                }
+                .foregroundColor(VRTheme.textMute)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 18)
+        .padding(.top, 18)
+    }
+
+    /// 名字下面那行小字（对应图片里的「IP: 江苏 | 0m」）。
+    /// 我们拿不到 IP 归属地，就换成这张名片确实知道的三件事：性别 / 麦位 / 在房时长。
+    private var subtitleTokens: [String] {
+        var t: [String] = [user.gender.label]
+        t.append(member.seat >= 0 ? "\(member.seat + 1) 号麦" : "听众")
+        if isHost { t.append("房主") }
+        if let m = stayMinutes { t.append("在房 \(m)m") }
+        return t
+    }
+
+    private var subtitle: some View {
+        var out = Text("")
+        for (i, token) in subtitleTokens.enumerated() {
+            if i > 0 {
+                out = out + Text("  |  ").foregroundColor(VRTheme.textMute.opacity(0.6))
+            }
+            out = out + Text(token)
+        }
+        return out
+            .font(.system(size: 11.5))
+            .foregroundColor(VRTheme.textDim)
+    }
+
+    /// 两个大圆按钮：左＝查看完整主页，右＝送礼物（自己则是编辑名片）
+    private var actionRow: some View {
+        HStack(spacing: 44) {
+            roundAction("查看完整主页", "person.crop.circle.fill",
+                        [Color(hex: "6BD5FF"), Color(hex: "3B8CFF")]) {
+                withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) { mode = .full }
+            }
+
+            if isMe {
+                roundAction("编辑我的名片", "square.and.pencil",
+                            [Color(hex: "C7A6FF"), Color(hex: "8E5BFF")]) {
+                    dismiss()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        app.showToast("请在大厅「设置 → 编辑名片」里修改")
+                    }
+                }
+            } else {
+                roundAction("送礼物", "gift.fill",
+                            [Color(hex: "FFA6C9"), Color(hex: "FF5C9E")]) {
+                    showGift = true
+                }
+            }
+        }
+        .padding(.top, 18)
+    }
+
+    private func roundAction(_ title: String, _ icon: String, _ colors: [Color],
+                             action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 8) {
+                ZStack {
+                    Circle()
+                        .fill(LinearGradient(colors: colors,
+                                             startPoint: .topLeading, endPoint: .bottomTrailing))
+                        .frame(width: 64, height: 64)
+                        .shadow(color: colors[1].opacity(0.35), radius: 10, y: 5)
+                    Image(systemName: icon)
+                        .font(.system(size: 26, weight: .semibold))
+                        .foregroundColor(.white)
+                }
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(VRTheme.text)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func toggleFull() {
+        withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+            mode = (mode == .full) ? .compact : .full
+        }
+    }
+
+    // MARK: 完整主页（compact 时隐藏）
+
+    @ViewBuilder
+    private var fullProfile: some View {
+        VStack(spacing: 14) {
+            Rectangle()
+                .fill(Color(hex: "27436B").opacity(0.08))
+                .frame(height: 1)
+                .padding(.top, 18)
+
+            HStack(spacing: 10) {
+                statBox(title: "💰 金币", value: shortNum(user.coins), color: VRTheme.gold)
+                statBox(title: "💖 魅力值", value: shortNum(user.charm), color: VRTheme.pink)
+                statBox(title: "👑 会员",
+                        value: user.vip ? "VIP\(user.vipLevel)" : "普通",
+                        color: user.vip ? VRTheme.gold : VRTheme.textDim)
+            }
+            .padding(.horizontal, 18)
+
+            // VIP 等级与刷礼物挂钩：展示晋升进度（自身已带水平内边距）
+            vipProgress
+
+            if !user.bio.isEmpty {
+                Text(user.bio)
+                    .font(.system(size: 13))
+                    .foregroundColor(VRTheme.textDim)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+            }
+
+            if !isMe {
+                Button("✉️ 打个招呼") {
+                    app.sendChat("@\(user.name) 你好呀 👋")
+                    dismiss()
+                }
+                .buttonStyle(VRButtonStyle(fullWidth: true))
+                .padding(.horizontal, 18)
+            }
+
+            Button("收起主页") { toggleFull() }
+                .buttonStyle(VRButtonStyle(kind: .plain, fullWidth: true))
+                .padding(.horizontal, 18)
         }
     }
 
@@ -311,7 +521,7 @@ struct UserCardSheet: View {
     /// VIP 晋升进度：魅力值越高等级越高（与刷礼物挂钩）
     @ViewBuilder
     private var vipProgress: some View {
-        let charm = member.user.charm
+        let charm = user.charm
         let cur = VIPCharmStairs.level(for: charm)
         let next = VIPCharmStairs.nextThreshold(for: charm)
         VStack(alignment: .leading, spacing: 7) {
@@ -320,9 +530,9 @@ struct UserCardSheet: View {
                     .font(.system(size: 11.5, weight: .semibold))
                     .foregroundColor(VRTheme.textDim)
                 Spacer()
-                Text(member.user.vip ? "VIP\(member.user.vipLevel)" : "未激活")
+                Text(user.vip ? "VIP\(user.vipLevel)" : "未激活")
                     .font(.system(size: 11.5, weight: .bold))
-                    .foregroundColor(member.user.vip ? VRTheme.gold : VRTheme.textMute)
+                    .foregroundColor(user.vip ? VRTheme.gold : VRTheme.textMute)
             }
 
             if let nxt = next {
@@ -357,7 +567,7 @@ struct UserCardSheet: View {
             RoundedRectangle(cornerRadius: 13, style: .continuous)
                 .strokeBorder(VRTheme.gold.opacity(0.35), lineWidth: 1)
         )
-        .padding(.horizontal, 20)
+        .padding(.horizontal, 18)
     }
 }
 
