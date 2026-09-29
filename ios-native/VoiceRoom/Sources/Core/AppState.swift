@@ -95,6 +95,10 @@ final class AppState: ObservableObject {
     func start() {
         savedUsername = UserDefaults.standard.string(forKey: "vr_username") ?? ""
         savedPassword = UserDefaults.standard.string(forKey: "vr_password") ?? ""
+        // 恢复扬声器开关（默认开）
+        if UserDefaults.standard.object(forKey: "vr_speaker") != nil {
+            speakerEnabled = UserDefaults.standard.bool(forKey: "vr_speaker")
+        }
         if let cached = LocalStore.loadUser() { me = cached }
         connection.connect()
     }
@@ -357,6 +361,7 @@ final class AppState: ObservableObject {
         speakerEnabled.toggle()
         voice.setSpeakerEnabled(speakerEnabled)
         MusicPlayer.shared.setMuted(!speakerEnabled)
+        UserDefaults.standard.set(speakerEnabled, forKey: "vr_speaker")
         showToast(speakerEnabled ? "扬声器已开" : "扬声器已关")
     }
 

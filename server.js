@@ -63,10 +63,11 @@ async function gdSearch(name, source, count) {
   }));
 }
 
-async function gdResolveUrl(source, songId, br) {
+async function gdResolveUrl(source, songId, br, force) {
   const key = source + '|' + songId + '|' + (br || 320);
   const hit = gdUrlCache.get(key);
-  if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.url;
+  // 直链有时效：缓存 3 分钟（原先 10 分钟会把过期链接当有效返回）
+  if (!force && hit && Date.now() - hit.at < 3 * 60 * 1000) return hit.url;
   const j = await gdFetchJson({ types: 'url', source, id: String(songId), br: String(br || 320) });
   if (!j || !j.url) throw new Error('拿不到播放地址');
   gdUrlCache.set(key, { url: j.url, at: Date.now() });
@@ -80,8 +81,55 @@ async function resolveSongUrl(song) {
   try {
     const [, source, songId] = String(song.libraryId).split('|');
     song.url = await gdResolveUrl(source, songId, 320);
+    song.resolvedAt = Date.now();
   } catch { /* 保留旧 url 或空 */ }
   return song.url;
+}
+
+/** 强制重解析（客户端播放失败时刷新直链用） */
+async function forceResolveSongUrl(song) {
+  if (!song || !song.remote || !song.libraryId) return song ? song.url : '';
+  const [, source, songId] = String(song.libraryId).split('|');
+  try {
+    song.url = await gdResolveUrl(source, songId, 320, true);
+    song.resolvedAt = Date.now();
+  } catch { /* 保留旧 url */ }
+  return song.url;
+}
+
+/**
+ * 播放推进（播完自动切歌 / 手动下一首）。
+ * 播放模式：
+ *  - order  列表循环：播到最后一首后回到第一首
+ *  - single 单曲循环：同一首无限重复
+ *  - once   列表播完结束：最后一首播完停止
+ */
+async function advancePlaylist(rt, trigger) {
+  if (!rt.playlist.length) { rt.playing = false; return; }
+  const mode = rt.playMode || 'order';
+  const idx = rt.playlist.findIndex(s => rt.currentSong && s.id === rt.currentSong.id);
+
+  // 单曲循环（仅自动播完触发；手动下一首照常切换）
+  if (mode === 'single' && trigger === 'ended' && rt.currentSong) {
+    await resolveSongUrl(rt.currentSong);
+    rt.playing = true;
+    rt.startedAt = Date.now();
+    rt.pauseOffsetMs = 0;
+    return;
+  }
+
+  let next = null;
+  if (trigger === 'ended' && mode === 'once') {
+    next = (idx + 1 < rt.playlist.length) ? rt.playlist[idx + 1] : null; // 播完结束
+  } else {
+    next = rt.playlist[(idx + 1) % rt.playlist.length]; // 循环
+  }
+  if (!next) { rt.playing = false; rt.pauseOffsetMs = 0; return; }
+  await resolveSongUrl(next);
+  rt.currentSong = next;
+  rt.playing = true;
+  rt.startedAt = Date.now();
+  rt.pauseOffsetMs = 0;
 }
 
 function parseGdLibraryId(libraryId) {
@@ -108,6 +156,8 @@ function pushRecent(userId, song) {
 const DEFAULT_CONFIG = {
   adminPassword: process.env.ADMIN_PASSWORD || 'admin888',
   vips: ['888888', '666666', '999999'],
+  // 全局房间背景模板（管理员上传，对所有房间通用；空串=未设置）
+  defaultBg: '',
   giftList: [
     { id: 'rose',   name: '玫瑰', emoji: '🌹', price: 1,    charm: 1 },
     { id: 'beer',   name: '啤酒', emoji: '🍺', price: 5,    charm: 5 },
@@ -199,6 +249,28 @@ function publicUser(u) {
            charm: Number.isInteger(u.charm) ? u.charm : 0,
            vip: !!u.vip, vipLevel: Number.isInteger(u.vipLevel) ? u.vipLevel : 0 };
 }
+
+/* ================= VIP 等级（与刷礼物得到的魅力值挂钩） ================= */
+// 魅力值阶梯：达到即自动晋升对应 VIP 等级（1-12），永久保留不掉级
+const VIP_CHARM_STAIRS = [100, 500, 2000, 8000, 30000, 100000, 300000, 1000000, 3000000, 10000000, 30000000];
+function vipLevelForCharm(charm) {
+  let lv = 0;
+  for (let i = 0; i < VIP_CHARM_STAIRS.length; i++) {
+    if ((charm || 0) >= VIP_CHARM_STAIRS[i]) lv = i + 1;
+  }
+  return lv;
+}
+/** 刷礼物/设魅力后重算 VIP；返回新等级（未升级返回 null） */
+function recomputeVip(u) {
+  if (!u) return null;
+  const lv = vipLevelForCharm(u.charm || 0);
+  if (lv > (u.vipLevel || 0)) {
+    u.vip = true;
+    u.vipLevel = lv;
+    return lv;
+  }
+  return null;
+}
 function ensureUser(id, patch) {
   let u = store.users[id];
   if (!u) {
@@ -247,9 +319,13 @@ function removeOnline(userId, ws) {
 }
 function getRuntime(roomId) {
   if (!runtime.has(roomId)) {
-    runtime.set(roomId, { members: new Map(), playlist: [], currentSong: null, playing: false, startedAt: 0, chatLog: [] });
+    runtime.set(roomId, { members: new Map(), playlist: [], currentSong: null, playing: false, startedAt: 0, chatLog: [],
+      playMode: 'order', pauseOffsetMs: 0 });
   }
-  return runtime.get(roomId);
+  const rt = runtime.get(roomId);
+  if (!rt.playMode) rt.playMode = 'order';
+  if (rt.pauseOffsetMs == null) rt.pauseOffsetMs = 0;
+  return rt;
 }
 function roomSnapshot(roomId) {
   const room = store.rooms[roomId];
@@ -269,6 +345,8 @@ function roomSnapshot(roomId) {
     members, seats,
     hostClientId: host ? host.clientId : (members[0] ? members[0].clientId : null),
     playlist: rt.playlist, currentSong: rt.currentSong, playing: rt.playing, startedAt: rt.startedAt,
+    playMode: rt.playMode || 'order',
+    globalBg: store.config.defaultBg || '',
     now: Date.now(), chatLog: rt.chatLog.slice(-60), giftList: store.config.giftList
   };
 }
@@ -278,6 +356,7 @@ const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8',
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
+  '.webp': 'image/webp',
   '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json',
   '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.wav': 'audio/wav', '.txt': 'text/plain; charset=utf-8'
 };
@@ -435,9 +514,62 @@ const server = http.createServer((req, res) => {
           return send(res, 400, JSON.stringify({ ok: false, msg: '参数错误' }));
         const u = store.users[userId];
         if (!u) return send(res, 404, JSON.stringify({ ok: false, msg: '用户不存在' }));
-        u.avatar = dataUrl.slice(0, 800000); saveStore();
-        send(res, 200, JSON.stringify({ ok: true }));
+        const match = /^data:image\/(png|jpe?g|gif|webp);base64,(.+)$/.exec(dataUrl);
+        if (!match) return send(res, 400, JSON.stringify({ ok: false, msg: '仅支持图片' }));
+        const buf = Buffer.from(match[2], 'base64');
+        if (buf.length > 8 * 1024 * 1024) return send(res, 413, JSON.stringify({ ok: false, msg: '头像不能超过 8MB' }));
+        // 存为文件（保留透明通道与 GIF 动画；URL 每次全新 → 客户端缓存按 URL 失效）
+        fs.mkdirSync(path.join(DATA_DIR, 'avatar'), { recursive: true });
+        const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
+        const name = 'av_' + crypto.randomBytes(6).toString('hex') + '.' + ext;
+        fs.writeFileSync(path.join(DATA_DIR, 'avatar', name), buf);
+        u.avatar = '/avatar/' + name;
+        saveStore();
+        // 用户所在房间即时刷新名片/麦位头像
+        for (const rid of runtime.keys()) {
+          const rt = runtime.get(rid);
+          if ([...rt.members.values()].some(m => m.userId === userId)) pushSnapshot(rid);
+        }
+        send(res, 200, JSON.stringify({ ok: true, url: u.avatar }));
       } catch { send(res, 500, JSON.stringify({ ok: false, msg: '上传失败' })); }
+    }, 12e6);
+  }
+
+  /* ---------- 管理后台给用户设置头像（文件式，支持透明/GIF） ---------- */
+  if (pathname === '/api/admin/upload-avatar' && req.method === 'POST') {
+    const pwd = url.searchParams.get('password');
+    if (pwd !== store.config.adminPassword) return send(res, 401, JSON.stringify({ ok: false, msg: '密码错误' }));
+    const userId = safeStr(url.searchParams.get('userId') || '', 40);
+    const u = store.users[userId];
+    if (!u) return send(res, 400, JSON.stringify({ ok: false, msg: '用户不存在' }));
+    return readBinaryBody(req, buf => {
+      if (!buf || buf.length === 0) return send(res, 400, JSON.stringify({ ok: false, msg: '文件为空' }));
+      if (buf.length > 8 * 1024 * 1024) return send(res, 413, JSON.stringify({ ok: false, msg: '头像不能超过 8MB' }));
+      const ext = sniffImageExt(buf);
+      if (!ext) return send(res, 400, JSON.stringify({ ok: false, msg: '仅支持 jpg/png/gif/webp 图片' }));
+      try {
+        fs.mkdirSync(path.join(DATA_DIR, 'avatar'), { recursive: true });
+        const name = 'av_' + crypto.randomBytes(6).toString('hex') + '.' + ext;
+        fs.writeFileSync(path.join(DATA_DIR, 'avatar', name), buf);
+        u.avatar = '/avatar/' + name;
+        saveStore();
+        for (const rid of runtime.keys()) {
+          const rt = runtime.get(rid);
+          if ([...rt.members.values()].some(m => m.userId === userId)) pushSnapshot(rid);
+        }
+        send(res, 200, JSON.stringify({ ok: true, url: u.avatar }));
+      } catch (e) { send(res, 500, JSON.stringify({ ok: false, msg: '保存失败：' + e.message })); }
+    }, 10e6);
+  }
+
+  /* ---------- 头像静态服务（长缓存：URL 变化才重新下载） ---------- */
+  if (pathname.startsWith('/avatar/')) {
+    const avFile = path.join(DATA_DIR, 'avatar', path.basename(pathname));
+    if (!avFile.startsWith(path.join(DATA_DIR, 'avatar'))) return send(res, 403, 'Forbidden');
+    return fs.readFile(avFile, (err, data) => {
+      if (err) return send(res, 404, 'Not Found');
+      const ext = path.extname(avFile).toLowerCase();
+      send(res, 200, data, { 'Content-Type': MIME[ext] || 'image/png', 'Cache-Control': 'public, max-age=2592000, immutable' });
     });
   }
 
@@ -467,6 +599,28 @@ const server = http.createServer((req, res) => {
         send(res, 200, JSON.stringify({ ok: true, url: bgUrl, myBgs: u.myBgs }));
       } catch (e) { send(res, 500, JSON.stringify({ ok: false, msg: '上传失败：' + e.message })); }
     }, 12e6);
+  }
+
+  /* ---------- 全局房间背景模板（管理员上传，对所有房间通用，GIF 会动） ---------- */
+  if (pathname === '/api/admin/upload-default-bg' && req.method === 'POST') {
+    const pwd = url.searchParams.get('password');
+    if (pwd !== store.config.adminPassword) return send(res, 401, JSON.stringify({ ok: false, msg: '密码错误' }));
+    return readBinaryBody(req, buf => {
+      if (!buf || buf.length === 0) return send(res, 400, JSON.stringify({ ok: false, msg: '文件为空' }));
+      if (buf.length > 6 * 1024 * 1024) return send(res, 413, JSON.stringify({ ok: false, msg: '背景图不能超过 6MB' }));
+      const ext = sniffImageExt(buf);
+      if (!ext) return send(res, 400, JSON.stringify({ ok: false, msg: '仅支持 jpg/png/gif/webp 图片' }));
+      try {
+        fs.mkdirSync(path.join(DATA_DIR, 'bg'), { recursive: true });
+        const name = 'bg_' + crypto.randomBytes(6).toString('hex') + '.' + ext;
+        fs.writeFileSync(path.join(DATA_DIR, 'bg', name), buf);
+        store.config.defaultBg = '/bg/' + name;
+        saveStore();
+        // 所有房间立即生效
+        for (const rid of Object.keys(store.rooms)) pushSnapshot(rid);
+        send(res, 200, JSON.stringify({ ok: true, url: store.config.defaultBg }));
+      } catch (e) { send(res, 500, JSON.stringify({ ok: false, msg: '保存失败：' + e.message })); }
+    }, 8e6);
   }
 
   /* ---------- 管理后台上传房间背景（指定房间） ---------- */
@@ -559,7 +713,8 @@ function handleAdmin(action, p, res) {
           totalCharm: users.reduce((s, u) => s + u.charm, 0),
           vipCount: users.filter(u => u.vip).length
         },
-        rooms, online, users, vips: store.config.vips, giftList: store.config.giftList
+        rooms, online, users, vips: store.config.vips, giftList: store.config.giftList,
+        defaultBg: store.config.defaultBg || ''
       }});
     }
     case 'give-coins': {
@@ -570,7 +725,8 @@ function handleAdmin(action, p, res) {
     case 'set-charm': {
       const u = store.users[p.userId]; if (!u) return bad('用户不存在');
       u.charm = Math.max(0, Math.floor(Number(p.amount) || 0));
-      saveStore(); return ok({ user: publicUser(u) });
+      const upLv = recomputeVip(u); // 魅力值变化联动 VIP 等级
+      saveStore(); return ok({ user: publicUser(u), vipUp: upLv || 0 });
     }
     case 'set-vip': {
       const u = store.users[p.userId]; if (!u) return bad('用户不存在');
@@ -600,6 +756,12 @@ function handleAdmin(action, p, res) {
     case 'set-vips': {
       if (Array.isArray(p.vips)) { store.config.vips = p.vips.map(v => safeStr(v, 20)).filter(Boolean); saveStore(); }
       return ok({ vips: store.config.vips });
+    }
+    case 'clear-default-bg': {
+      store.config.defaultBg = '';
+      saveStore();
+      for (const rid of Object.keys(store.rooms)) pushSnapshot(rid);
+      return ok({ defaultBg: '' });
     }
     case 'set-admin-password': {
       if (typeof p.newPassword === 'string' && p.newPassword.length >= 4) {
@@ -726,6 +888,9 @@ wss.on('connection', (ws) => {
     let msg;
     try { msg = JSON.parse(buf.toString()); } catch { return reply({ type: 'error', msg: '消息格式错误' }); }
 
+    // 整段处理包在 try 里：任何一处意外异常都不该掀翻整个进程。
+    // （Node 15+ 未捕获的 Promise rejection 默认会直接终止进程 = 全房掉线）
+    try {
     switch (msg.type) {
       case 'auth': {
         // 账号密码登录：新账号自动注册，老账号校验密码（sha256），同账号多端互踢
@@ -854,6 +1019,17 @@ wss.on('connection', (ws) => {
           for (let i = 1; i < 9; i++) if (!used.has(i)) { seat = i; break; }
         }
         rt.members.set(clientId, { clientId, userId, ws, seat, muted: false, joinedAt: Date.now() });
+
+        // 进房时把「当前歌曲」的直链刷新一遍：
+        // 在线曲库直链有时效（约分钟级），久放后 URL 已失效，
+        // 若直接下发旧 URL 客户端会放不出来（表现为"重进房间音乐不放，
+        // 重新搜歌再点播放才行"）。这里按 resolvedAt 判断，过期就重解析。
+        if (rt.currentSong && rt.currentSong.remote) {
+          const age = Date.now() - (rt.currentSong.resolvedAt || 0);
+          if (!rt.currentSong.url || age > 4 * 60 * 1000) {
+            await resolveSongUrl(rt.currentSong);
+          }
+        }
 
         reply({ type: 'join:ok', data: { clientId, roomId: room.id, userId } });
         for (const m of rt.members.values()) {
@@ -993,11 +1169,24 @@ wss.on('connection', (ws) => {
           const to = store.users[toMember.userId];
           if (to) to.charm += gift.charm * count;
         }
+        // VIP 等级与刷礼物（魅力值）挂钩：达标自动晋升并全房广播
+        const sysMsgs = [];
+        const upFrom = recomputeVip(from);
+        if (upFrom) sysMsgs.push(`🎉 ${from.name} 魅力值达到 ${from.charm}，晋升 VIP${upFrom}！`);
+        if (toMember) {
+          const upTo = recomputeVip(store.users[toMember.userId]);
+          if (upTo) sysMsgs.push(`🎉 ${store.users[toMember.userId].name} 收礼升级，晋升 VIP${upTo}！`);
+        }
         saveStore();
         broadcast(joinedRoom, { type: 'gift', data: {
           id: uid('g'), from: publicUser(from), toClientId: msg.toClientId,
           gift: { id: gift.id, name: gift.name, emoji: gift.emoji }, count, at: Date.now()
         }});
+        for (const t of sysMsgs) {
+          const sm = { id: uid('m'), sys: true, text: t, at: Date.now() };
+          rt.chatLog.push(sm);
+          broadcast(joinedRoom, { type: 'chat', data: sm });
+        }
         reply({ type: 'coins:update', data: { coins: from.coins, charm: from.charm } });
         if (toMember) sendTo(toMember.clientId, joinedRoom, { type: 'charm:update', data: { user: publicUser(store.users[toMember.userId]) } });
         pushSnapshot(joinedRoom);
@@ -1054,6 +1243,11 @@ wss.on('connection', (ws) => {
           }
         }
 
+        // 歌单上限 20 首（超出提示，避免无限堆积）
+        if (rt.playlist.length >= 20) {
+          return reply({ type: 'error', msg: '歌单最多 20 首，先移除几首吧' });
+        }
+
         rt.playlist.push(song);
         if (!rt.currentSong) {
           await resolveSongUrl(song);
@@ -1102,24 +1296,54 @@ wss.on('connection', (ws) => {
       case 'music:control': {
         const rt = runtime.get(joinedRoom); if (!rt) return;
         const a = msg.action;
-        if (a === 'play' && rt.currentSong) { rt.playing = true; rt.startedAt = Date.now(); }
-        if (a === 'pause') rt.playing = false;
-        if (a === 'next' && rt.playlist.length) {
-          const idx = rt.playlist.findIndex(s => rt.currentSong && s.id === rt.currentSong.id);
-          rt.currentSong = rt.playlist[(idx + 1) % rt.playlist.length];
-          await resolveSongUrl(rt.currentSong); // 远端歌重取直链
-          rt.playing = true; rt.startedAt = Date.now();
-          pushRecent((rt.members.get(clientId) || {}).userId, rt.currentSong);
+        if (a === 'play' && rt.currentSong) {
+          const off = rt.pauseOffsetMs || 0;
+          rt.playing = true;
+          rt.startedAt = Date.now() - off;   // 接着暂停处继续
+          rt.pauseOffsetMs = 0;
+        }
+        if (a === 'pause') {
+          rt.pauseOffsetMs = rt.playing && rt.startedAt > 0 ? (Date.now() - rt.startedAt) : (rt.pauseOffsetMs || 0);
+          rt.playing = false;
+        }
+        // 播放模式：order 列表循环 / single 单曲循环 / once 列表播完结束
+        if (a === 'mode' && ['order', 'single', 'once'].includes(msg.mode)) {
+          rt.playMode = msg.mode;
+        }
+        // 客户端播完自动上报 → 按模式推进；once 模式播完最后一首即停止
+        if (a === 'ended') {
+          // 全房同步播放时，所有客户端几乎同时播完、各自都会上报一次 ended。
+          // 不去重的话房里有 N 个人就会连跳 N 首。这里只认「距本曲起播已超过 1.5 秒」的那一次：
+          // 重复上报到达时 startedAt 刚被下面的语句刷新，会被自然挡掉。
+          const now = Date.now();
+          if (now - (rt.startedAt || 0) > 1500) {
+            rt.startedAt = now;              // 立即占位，挡住并发到达的重复上报
+            await advancePlaylist(rt, 'ended');
+          }
+        }
+        if (a === 'next') {
+          await advancePlaylist(rt, 'next');
         }
         if (a === 'select' && msg.songId) {
           const s = rt.playlist.find(x => x.id === msg.songId);
-          if (s) { await resolveSongUrl(s); rt.currentSong = s; rt.playing = true; rt.startedAt = Date.now(); pushRecent((rt.members.get(clientId) || {}).userId, s); }
+          if (s) { await resolveSongUrl(s); rt.currentSong = s; rt.playing = true; rt.startedAt = Date.now(); rt.pauseOffsetMs = 0; }
         }
         if (a === 'remove' && msg.songId) {
           rt.playlist = rt.playlist.filter(x => x.id !== msg.songId);
           if (rt.currentSong && rt.currentSong.id === msg.songId) {
-            rt.currentSong = rt.playlist[0] || null; rt.playing = !!rt.currentSong; rt.startedAt = Date.now();
+            rt.currentSong = rt.playlist[0] || null; rt.playing = !!rt.currentSong;
+            rt.startedAt = Date.now(); rt.pauseOffsetMs = 0;
+            if (rt.currentSong) await resolveSongUrl(rt.currentSong);
           }
+        }
+        // 清空歌单
+        if (a === 'clear') {
+          rt.playlist = []; rt.currentSong = null; rt.playing = false; rt.startedAt = 0; rt.pauseOffsetMs = 0;
+        }
+        // 直链失效重解析（客户端播放报错时调用，重解析后从头播放该曲）
+        if (a === 'reload' && rt.currentSong) {
+          await forceResolveSongUrl(rt.currentSong);
+          rt.playing = true; rt.startedAt = Date.now(); rt.pauseOffsetMs = 0;
         }
         pushSnapshot(joinedRoom);
         break;
@@ -1132,6 +1356,10 @@ wss.on('connection', (ws) => {
 
       default:
         reply({ type: 'error', msg: '未知消息: ' + msg.type });
+    }
+    } catch (e) {
+      console.error('[ws] 处理消息出错: type=' + (msg && msg.type), (e && e.stack) || e);
+      try { reply({ type: 'error', msg: '服务端处理出错，请重试' }); } catch (_) {}
     }
   });
 
@@ -1153,6 +1381,17 @@ setInterval(() => {
 
 /* 房间为永久房间（每人一个），不再自动清理空房间。
    房主可主动通过 room:destroy 解散自己的房间。 */
+
+/* 兜底：Node 15+ 未捕获的 Promise rejection 默认会直接终止进程。
+   语音房是常驻服务，一个偶发的异步异常不该让全房掉线 —— 记录后继续运行。 */
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', (reason && reason.stack) || reason);
+});
+/* 未捕获异常属于不可预期的状态损坏，记录后交给 systemd 重启，避免带病运行 */
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', (err && err.stack) || err);
+  process.exit(1);
+});
 
 server.listen(PORT, '0.0.0.0', () => {
   const nets = require('os').networkInterfaces();

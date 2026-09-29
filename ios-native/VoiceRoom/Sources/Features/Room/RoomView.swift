@@ -18,8 +18,13 @@ struct RoomView: View {
     @State private var showProfile = false
     @State private var cardUser: VRCardTarget?
     /// 悬浮音乐条位置（可拖动，默认在房主麦位与第一排之间）
+    /// 位置会持久化：用户挪过一次，之后进房都停在原地
     @State private var musicBarOffset: CGSize = .zero
+    @State private var musicBarOffsetRestored = false
     @State private var musicBarDragging = false
+
+    private static let musicBarXKey = "vr_music_bar_x"
+    private static let musicBarYKey = "vr_music_bar_y"
 
     @FocusState private var chatFocused: Bool
 
@@ -41,6 +46,15 @@ struct RoomView: View {
             floatingMusicBar
 
             giftOverlay
+        }
+        .onAppear {
+            // 只在首次出现时恢复悬浮条位置（之后进房沿用用户挪到的位置）
+            if !musicBarOffsetRestored {
+                musicBarOffsetRestored = true
+                let x = UserDefaults.standard.double(forKey: Self.musicBarXKey)
+                let y = UserDefaults.standard.double(forKey: Self.musicBarYKey)
+                if x != 0 || y != 0 { musicBarOffset = CGSize(width: x, height: y) }
+            }
         }
         .sheet(isPresented: $showGift) {
             GiftSheet(state: state, presetTarget: nil).environmentObject(app)
@@ -210,6 +224,9 @@ struct RoomView: View {
                                 musicBarOffset.width = min(max(musicBarOffset.width, -maxDX), maxDX)
                                 musicBarOffset.height = min(max(musicBarOffset.height, -geo.size.height * 0.24),
                                                             geo.size.height * 0.42)
+                                // 记住位置，下次进房不用再挪
+                                UserDefaults.standard.set(musicBarOffset.width, forKey: Self.musicBarXKey)
+                                UserDefaults.standard.set(musicBarOffset.height, forKey: Self.musicBarYKey)
                             }
                         }
                 )

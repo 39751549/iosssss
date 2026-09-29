@@ -736,22 +736,26 @@ struct MusicSheet: View {
 
     /// 点播一条本地记录
     private func playRecord(_ r: VRMusicRecord) {
-        guard let url = r.playURL else {
-            app.showToast("歌曲地址无效", kind: .error)
+        // 在线曲库记录：songId 形如 gd_<libraryId>。
+        // 这类歌本地存的是「当时的直链」，可能早就过期、甚至已解析不成 URL，
+        // 必须交给服务端重新解析，不能依赖本地地址 —— 否则收藏/最近里的歌点不动。
+        if r.songId.hasPrefix("gd_") {
+            let lid = String(r.songId.dropFirst(3))
+            app.playLibrarySong(libraryId: lid, by: app.me?.name ?? "我",
+                                title: r.title, artist: r.artist)
+        } else if let url = r.playURL, r.source == .library, let libId = libraryId(from: url) {
+            // 本地曲库：地址稳定（/api/music/file/<libId>）
+            app.playLibrarySong(libraryId: libId, by: app.me?.name ?? "我",
+                                title: r.title, artist: r.artist)
+        } else if let url = r.playURL {
+            // 外链：只能用保存下来的地址
+            app.addSongByURL(title: r.title, url: url.absoluteString)
+        } else {
+            app.showToast("这首歌的地址已失效，请重新搜索", kind: .error)
             return
         }
-        // 曲库歌曲优先走 libraryId 走服务端曲库路径
-        if r.source == .library, let libId = libraryId(from: url) {
-            app.playLibrarySong(libraryId: libId, by: app.me?.name ?? "我")
-        } else if r.songId.hasPrefix("gd_") {
-            // 在线曲库记录：songId 形如 gd_<libraryId>
-            let lid = String(r.songId.dropFirst(3))
-            app.playLibrarySong(libraryId: lid, by: app.me?.name ?? "我", title: r.title)
-        } else {
-            app.addSongByURL(title: r.title, url: url.absoluteString)
-        }
         history.recordPlay(songId: r.songId, title: r.title, artist: r.artist,
-                           url: url.absoluteString, source: r.source)
+                           url: r.url, source: r.source)
         app.showToast("正在为全房间点播…", kind: .success)
     }
 

@@ -155,7 +155,8 @@ final class MediaCache: NSObject {
 
     // MARK: - 路径与键
 
-    /// 用 SHA 摘要做文件名，避免 URL 里的非法字符
+    /// 用 64 位 FNV-1a 摘要做文件名，避免 URL 里的非法字符
+    /// （非加密哈希，但对「图片 URL → 文件名」足够；碰撞概率可忽略）
     private func key(_ url: URL) -> String {
         var hash = UInt64(1469598103934665603)
         for b in Array(url.absoluteString.utf8) {
