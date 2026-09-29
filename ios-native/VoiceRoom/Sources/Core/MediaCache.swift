@@ -234,12 +234,19 @@ final class MediaCache: NSObject {
 struct CachedAsyncImage<Content: View>: View {
 
     let url: URL?
-    @ViewBuilder var content: (Phase) -> Content
+    @ViewBuilder let content: (Phase) -> Content
 
     enum Phase {
         case empty
         case success(UIImage)
         case failure
+    }
+
+    /// 显式初始化器：保证 content 闭包走 @ViewBuilder，
+    /// 让调用点的多分支视图能被正确推断为同一个 Content 类型
+    init(url: URL?, @ViewBuilder content: @escaping (Phase) -> Content) {
+        self.url = url
+        self.content = content
     }
 
     @State private var image: UIImage?
