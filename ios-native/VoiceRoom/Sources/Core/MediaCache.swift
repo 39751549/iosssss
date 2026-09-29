@@ -231,22 +231,26 @@ final class MediaCache: NSObject {
 /// 类似 AsyncImage，但：
 /// 1) 走 MediaCache 两级缓存（内存 + 磁盘，URL 不变不重复下载）
 /// 2) 支持 GIF 动图（AsyncImage 只显示第一帧）
-struct CachedAsyncImage<Content: View>: View {
+struct CachedAsyncImage: View {
 
-    let url: URL?
-    @ViewBuilder let content: (Phase) -> Content
-
+    /// Phase 必须放在「非泛型」结构体里。
+    /// 若 CachedAsyncImage 带 <Content> 泛型，闭包参数 phase 的类型 Phase 就嵌套在泛型类型内部，
+    /// 而 Content 又需要从闭包体反推 → 形成循环依赖，编译直接报
+    /// "generic parameter 'Content' could not be inferred"。
+    /// 这里把内容闭包统一擦除成 AnyView，结构体本身不再泛型，彻底规避该问题。
     enum Phase {
         case empty
         case success(UIImage)
         case failure
     }
 
-    /// 显式初始化器：保证 content 闭包走 @ViewBuilder，
-    /// 让调用点的多分支视图能被正确推断为同一个 Content 类型
-    init(url: URL?, @ViewBuilder content: @escaping (Phase) -> Content) {
+    let url: URL?
+    private let content: (Phase) -> AnyView
+
+    /// 泛型只落在初始化器上（仅在调用点做局部推断）
+    init<C: View>(url: URL?, @ViewBuilder content: @escaping (Phase) -> C) {
         self.url = url
-        self.content = content
+        self.content = { AnyView(content($0)) }
     }
 
     @State private var image: UIImage?
