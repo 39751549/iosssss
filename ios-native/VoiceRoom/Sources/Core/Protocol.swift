@@ -27,6 +27,26 @@ enum VRConfig {
     }
 }
 
+/// 设备标识：一次安装生成一次，之后长期保存。
+///
+/// 用途：让服务端能区分这两种「同账号第二条连接」——
+///   1. 同一台设备切后台/回前台、断线后重连（旧连接还没来得及注销）→ 应当静默替换，不提示顶号；
+///   2. 真的在另一台手机上登录 → 才提示「账号在其他地方登录」。
+/// 没有这个标识时服务端只能一律按顶号处理，用户自己重连就会被自己的旧连接顶下线。
+enum VRDevice {
+    private static let key = "vr_device_id"
+
+    /// 稳定设备 ID（UUID，持久化在 UserDefaults，卸载才会重置）
+    static let id: String = {
+        if let saved = UserDefaults.standard.string(forKey: key), !saved.isEmpty {
+            return saved
+        }
+        let fresh = UUID().uuidString
+        UserDefaults.standard.set(fresh, forKey: key)
+        return fresh
+    }()
+}
+
 /// 服务器地址的本地存储（App 内可改，无需重新打包）
 final class ServerStore: ObservableObject {
     static let shared = ServerStore()
@@ -87,7 +107,9 @@ enum VRClientMessage {
     var payload: [String: Any] {
         switch self {
         case let .auth(username, password):
-            return ["type": "auth", "username": username, "password": password]
+            // 带上设备标识：服务端据此判断这是"本机重连"还是"异地登录"，
+            // 本机重连静默替换旧连接，不会弹"账号在其他地方登录"。
+            return ["type": "auth", "username": username, "password": password, "deviceId": VRDevice.id]
 
         case let .profileUpdate(userId, name, avatar, gender, bio):
             var patch: [String: Any] = [:]

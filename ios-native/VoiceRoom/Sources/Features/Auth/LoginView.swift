@@ -138,6 +138,13 @@ struct LoginView: View {
                 .environmentObject(serverStore)
                 .environmentObject(app)
         }
+        .onAppear {
+            // 被"另一台设备"顶下线后会回到登录页：预填账号，用户只需补密码，
+            // 不用再回忆自己当时注册了什么名字。
+            if username.isEmpty, !app.rememberedUsername.isEmpty {
+                username = app.rememberedUsername
+            }
+        }
     }
 
     private func doLogin() {

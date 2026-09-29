@@ -40,6 +40,13 @@ final class AppState: ObservableObject {
 
     // MARK: 提示
     @Published var toast: ToastMessage?
+    /// 被「另一台设备」顶下线（用于登录页说明原因 + 一键重登）
+    @Published var kickedByOtherDevice = false
+
+    /// 已保存的账号（登录页预填用，避免被顶后要重新回忆账号密码）
+    var rememberedUsername: String { savedUsername }
+
+    private var didStart = false
 
     let connection = VRConnection()
     private let voice = VoiceEngine()
@@ -91,6 +98,10 @@ final class AppState: ObservableObject {
     // MARK: - 登录
 
     func start() {
+        // 幂等：SwiftUI 可能重复触发 onAppear，重复 connect 会在服务端留下两条同账号连接
+        guard !didStart else { return }
+        didStart = true
+
         savedUsername = UserDefaults.standard.string(forKey: "vr_username") ?? ""
         savedPassword = UserDefaults.standard.string(forKey: "vr_password") ?? ""
         // 恢复扬声器开关（默认开）
@@ -101,12 +112,30 @@ final class AppState: ObservableObject {
         connection.connect()
     }
 
+    /// App 回到前台时调用。
+    /// 切后台期间系统可能已经掐掉 WebSocket（进程被挂起，收不到失败回调），
+    /// 回前台后不主动探测就会一直停在"正在连接"。这里直接发起一次重连，
+    /// 连上后由 status 回调自动静默登录。
+    func appDidBecomeActive() {
+        guard isLoggedIn || !savedUsername.isEmpty || !pendingUsername.isEmpty else { return }
+        if connection.isConnected {
+            // 链路还在，但登录态丢了（例如刚被顶下线过）→ 补一次静默登录
+            if !isLoggedIn { silentAuth() }
+        } else {
+            connection.reconnectNow()
+        }
+    }
+
     /// 登录（账号密码；新账号服务端自动注册）
     func login(username: String, password: String) {
         let clean = username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         pendingUsername = clean
         pendingPassword = password
-        // 未连上时也允许发送：连接建立后 AppState 会补一次 auth
+        kickedByOtherDevice = false
+        // 显式登录：先把链路准备好。
+        // 被顶下线 / 主动登出之后 shouldReconnect 是 false、task 是 nil，
+        // 不先 resume 的话下面的 send 会被静默丢弃，表现为"点了登录没反应"。
+        connection.resume()
         connection.send(.auth(username: clean, password: password))
     }
 
@@ -142,6 +171,7 @@ final class AppState: ObservableObject {
             me = user
             giftList = gifts
             isLoggedIn = true
+            kickedByOtherDevice = false
             // 登录成功：凭据落盘，下次自动登录
             if !pendingUsername.isEmpty {
                 savedUsername = pendingUsername
@@ -198,17 +228,16 @@ final class AppState: ObservableObject {
             }
 
         case let .roomKicked(reason):
-            // 同账号在其他设备登录，本会话被顶下线。
-            // 必须清凭据并停止重连，否则两边会互相挤下线形成死循环。
+            // 同账号在「另一台设备」登录，本会话被顶下线。
+            // 这里只停掉当前会话、不再自动重连（两边都自动重连会互相抢号，形成死循环）。
+            // 但**保留**已保存的账号密码：以前连凭据一起清掉，于是一次判定失误就得让用户
+            // 重新输密码；现在登录页会预填，点一下就能回到岛上。
+            // 注：本机切后台重连不会再走到这里——服务端已用 deviceId 把「本机重连」识别为静默替换。
+            kickedByOtherDevice = true
             showToast(reason, kind: .error)
             leaveRoom()
-            savedUsername = ""
-            savedPassword = ""
-            pendingUsername = ""
-            pendingPassword = ""
-            UserDefaults.standard.removeObject(forKey: "vr_username")
-            UserDefaults.standard.removeObject(forKey: "vr_password")
             isLoggedIn = false
+            userId = ""
             connection.disconnect()
 
         case let .joinOK(cid, roomId, _):

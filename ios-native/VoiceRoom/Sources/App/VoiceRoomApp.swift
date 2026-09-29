@@ -21,6 +21,9 @@ struct VoiceRoomApp: App {
 struct RootView: View {
     @EnvironmentObject var app: AppState
     @EnvironmentObject var serverStore: ServerStore
+    /// 前后台切换：切后台时系统可能掐掉 WebSocket（进程挂起收不到失败回调），
+    /// 回前台必须主动探测/重连，否则会一直卡在"正在连接"。
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         ZStack {
@@ -79,6 +82,9 @@ struct RootView: View {
         .animation(.easeInOut(duration: 0.28), value: app.inRoom)
         .animation(.easeInOut(duration: 0.28), value: app.roomMinimized)
         .animation(.easeInOut(duration: 0.28), value: app.isLoggedIn)
+        .onChange(of: scenePhase) { phase in
+            if phase == .active { app.appDidBecomeActive() }
+        }
     }
 }
 

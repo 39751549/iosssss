@@ -849,28 +849,47 @@ function leaveRoom(clientId, roomId) {
   else pushSnapshot(roomId);
 }
 
-/** 同账号互踢：同一 userId 只保留最新连接（大厅挂机的也算在线），旧连接从所在房间移除并断开 */
-function kickExistingSessions(userId, exceptWs) {
+/** 判断某条旧连接是否与本次登录来自同一台设备 */
+function isSameDevice(oldWs, deviceId) {
+  if (!deviceId || !oldWs || !oldWs.deviceId) return false;
+  return oldWs.deviceId === deviceId;
+}
+
+/**
+ * 同账号互踢：同一 userId 只保留最新连接（大厅挂机的也算在线），旧连接从所在房间移除并断开。
+ *
+ * 关键区分（修复"切后台再回来提示在别处登录"）：
+ *   同一台设备的旧连接 = 断网/切后台留下的残留 socket → **静默关闭**，不给它发 room:kicked。
+ *   只有 deviceId 不同（真的换了台手机登录）才下发顶号提示。
+ *
+ * 之前不看设备标识、见同账号就顶，导致本机重连时自己的旧连接被判为"异地登录"，
+ * 而那条旧连接的消息通道还挂在同一个 AppState 上，用户就在自己屏幕上看到了顶号提示。
+ */
+function kickExistingSessions(userId, exceptWs, deviceId) {
   let kicked = 0;
   // 1) 全局在线注册表（覆盖大厅挂机连接）
   const sessions = onlineUsers.get(userId);
   if (sessions) {
     for (const old of [...sessions]) {
       if (old === exceptWs) continue;
-      try { old.send(JSON.stringify({ type: 'room:kicked', data: { reason: '你的账号在其他地方登录了' } })); } catch {}
+      const sameDevice = isSameDevice(old, deviceId);
+      if (!sameDevice && old.readyState === 1) {
+        try { old.send(JSON.stringify({ type: 'room:kicked', data: { reason: '你的账号在其他地方登录了' } })); } catch {}
+      }
       if (old.joinedRoom) leaveRoom(old.clientId, old.joinedRoom);
       try { old.close(); } catch {}
       removeOnline(userId, old);
-      kicked++;
+      if (!sameDevice) kicked++;
     }
   }
   // 2) 兜底：房间 runtime 里 userId 相同但未走注册表的残留会话
   for (const [roomId, rt] of runtime) {
     for (const m of [...rt.members.values()]) {
       if (m.userId === userId && m.ws !== exceptWs) {
+        const sameDevice = isSameDevice(m.ws, deviceId);
         try { m.ws.close(); } catch {}
         leaveRoom(m.clientId, roomId);
-        kicked++;
+        if (!sameDevice) kicked++;
       }
     }
   }
@@ -914,9 +933,11 @@ wss.on('connection', (ws) => {
         // 新账号以账号为昵称；老用户保留已改过的名片昵称
         const user = ensureUser(userId, acc.isNew ? { name: username } : null);
         // 注册到在线表，再踢旧会话（覆盖大厅挂机的连接）
+        // deviceId 由客户端持久化生成：同 deviceId 的旧连接视为本机残留，静默替换不提示顶号
         ws.authUserId = userId;
+        ws.deviceId = safeStr(msg.deviceId, 64);
         addOnline(userId, ws);
-        kickExistingSessions(userId, ws);
+        kickExistingSessions(userId, ws, ws.deviceId);
         saveStore();
         return reply({ type: 'auth:ok', data: { userId, user: publicUser(user), giftList: store.config.giftList } });
       }
