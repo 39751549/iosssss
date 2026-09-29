@@ -57,6 +57,8 @@ struct RoomView: View {
 
             giftOverlay
         }
+        // 从左边缘往右滑 → 最小化（回到大厅的悬浮球，房间状态与语音连接都保持）
+        .simultaneousGesture(backSwipeToMinimize)
         .onAppear {
             // 只在首次出现时恢复悬浮条的位置与展开状态（之后进房沿用用户当前的选择）
             if !musicBarOffsetRestored {
@@ -633,6 +635,31 @@ struct RoomView: View {
         UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .first?.windows.first?.safeAreaInsets.bottom ?? 0
+    }
+
+    // MARK: - 左边缘右滑 → 最小化
+
+    /// 从屏幕左边缘往右滑 = 最小化房间（等同系统返回手势的方向，但语义是"缩到悬浮球"，
+    /// 不是退出房间 —— 语音连接和麦位都保持，点悬浮球原样回来）。
+    ///
+    /// 为什么用 `simultaneousGesture` 而不是在左边盖一条透明手势条：
+    /// 盖条会挡住左侧按钮的点击热区 —— 顶栏的 ⌄ 和底部工具栏的扬声器都贴着左边缘
+    /// （水平 padding 只有 12pt），一条 20pt 宽的透明条能吃掉它们左边一半的点击。
+    /// `simultaneousGesture` 是"并联识别"，不会抢走子视图的点击；
+    /// 再用 `startLocation.x` 把起手位置限定在左边缘 22pt 内，
+    /// 就不会跟悬浮音乐条的拖动打架（音乐条默认贴右边缘，就算被拖到左边，
+    /// 那种起手点也不在边缘区里）。
+    ///
+    /// 方向判定要求"横向位移明显大于纵向"，否则在公屏上竖直滑动也会被误当成返回手势。
+    private var backSwipeToMinimize: some Gesture {
+        DragGesture(minimumDistance: 12)
+            .onEnded { g in
+                guard g.startLocation.x <= 22 else { return }
+                let dx = g.translation.width
+                let dy = g.translation.height
+                guard dx > 56, abs(dx) > abs(dy) * 1.5 else { return }
+                app.roomMinimized = true
+            }
     }
 
     private func sendChat() {

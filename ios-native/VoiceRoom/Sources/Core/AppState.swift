@@ -378,14 +378,41 @@ final class AppState: ObservableObject {
     }
 
     func joinRoom(id: String) {
+        // 要进的就是**当前已经待着的房间** → 只把最小化的房间展开，不发 room:join。
+        //
+        // 为什么必须挡住这一次 join：服务端收到 room:join 会走一整套进房流程 ——
+        // 摘掉本连接的旧身份、重新分配麦位、给所有老成员广播 peer:new（于是每个人都要
+        // 重建一次 WebRTC 连接）、重推全量快照、再往公屏刷一条"XX 进入了房间"。
+        // 用户只是从悬浮球点回自己的房间，看到的却是整间房刷新了一遍 +
+        // 公屏多出一条进房消息 —— 就是"点进入房间就重新进了一次"。
+        if inRoom, roomState?.room.id == id || lastRoomId == id {
+            resumeCurrentRoom()
+            return
+        }
         leaveIfSwitching(to: id)
         connection.send(.roomJoin(userId: userId, roomId: id, no: nil))
     }
 
     func joinRoom(no: String) {
+        // 同上：输入的就是当前房间号 → 直接展开，不重新进房
+        if inRoom, roomState?.room.no == no {
+            resumeCurrentRoom()
+            return
+        }
         // 用房间号进房比不了 id，只要在房间里就先退（退完再进，语义正确且不会留下幽灵）
         if inRoom { leaveRoom() }
         connection.send(.roomJoin(userId: userId, roomId: nil, no: no))
+    }
+
+    /// 展开最小化的房间（从悬浮球 / 大厅点"进入我的房间"回到房间里）。
+    ///
+    /// 只做两件事：取消最小化 + 拉一次最新快照。
+    /// `requestRoomSync` 是纯读操作 —— 只回给请求方一份 room:state，不会重连语音、
+    /// 不会动麦位、不会刷公屏，所以既能对齐"我离开这段时间有人进出了"，
+    /// 又不会让用户感觉到"重新进了一次房间"。
+    func resumeCurrentRoom() {
+        roomMinimized = false
+        requestRoomSync()
     }
 
     /// 换房前先退掉当前房间。
