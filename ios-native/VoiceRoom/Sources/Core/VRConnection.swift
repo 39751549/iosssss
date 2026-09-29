@@ -51,10 +51,13 @@ final class VRConnection: ObservableObject {
         // status 会永远停在 .connecting，上层「连上就自动登录」的逻辑就永远不触发
         // （表现就是每次重开 App 都要手动登录）。
         // 这里再补一个探测：ping 能正常往返即认为链路可用。
+        // 注意：必须先 guard let self 把弱引用固化，再进 Task，
+        // 否则会把「弱引用盒子」捕获进并发闭包，Swift 直接报错。
         t.sendPing { [weak self] err in
+            guard let self = self, err == nil else { return }
             Task { @MainActor in
-                guard let self, self.task === t else { return }   // 已被更新的连接替换
-                if err == nil { self.markConnected() }
+                guard self.task === t else { return }   // 已被更新的连接替换
+                self.markConnected()
             }
         }
     }
