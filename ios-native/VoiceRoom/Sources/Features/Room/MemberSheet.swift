@@ -183,6 +183,10 @@ private struct VRCardDetentModifier: ViewModifier {
         }
     }
 
+    /// `PresentationDetent` 本身是 iOS 16+ 的类型，
+    /// 所以**用到它的属性也要标 `@available`** —— 只在 body 里写 `if #available` 不够：
+    /// 编译器是逐个声明检查可用性的，一个 iOS 16 类型出现在未标注的属性签名里就直接报错。
+    @available(iOS 16.0, *)
     private var detent: Binding<PresentationDetent> {
         Binding(
             get: { mode == .full ? PresentationDetent.large : PresentationDetent.medium },
