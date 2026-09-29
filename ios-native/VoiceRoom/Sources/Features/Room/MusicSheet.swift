@@ -30,6 +30,15 @@ struct MusicSheet: View {
     @State private var results: [VRLibrarySong] = []
     @State private var searchState: SearchState = .idle
     @State private var searchTask: Task<Void, Never>?
+    /// 上一次还在飞的搜索请求（输入新内容前先取消）
+    @State private var searchDataTask: URLSessionDataTask?
+    /// 请求序号：只认最后一次发起的那条，迟到的旧结果直接丢弃
+    @State private var searchSeq = 0
+
+    /// 键盘焦点。有了它才能"点任意地方就收起键盘"——
+    /// 之前搜索框没有焦点绑定，输入法弹出来之后除了按键盘上的"搜索"没有别的办法收掉，
+    /// 在小屏上键盘正好盖住结果列表，看起来就像"卡住了关不掉"。
+    @FocusState private var searchFocused: Bool
 
     enum SearchState: Equatable {
         case idle, loading, empty, failed(String)
@@ -70,10 +79,28 @@ struct MusicSheet: View {
                 .vrScrollDismissKeyboard()
             }
         }
+        // 点面板任意位置都收起键盘。
+        // 用 simultaneousGesture 而不是 onTapGesture：并联识别不会被列表/按钮吃掉，
+        // 点空白、点歌、点标签页都会顺手把输入法收掉；而按钮自己的动作照常执行。
+        .simultaneousGesture(TapGesture().onEnded {
+            if searchFocused { searchFocused = false }
+        })
+        // 键盘上方再给一个明确的「完成」，这是最不容易被误解的收起方式
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("完成") { searchFocused = false }
+            }
+        }
         .vrSheet()
         .onAppear {
             cache.refreshStats()
             if results.isEmpty { runSearch("") }
+        }
+        .onDisappear {
+            // 面板关掉就别让请求继续跑（尤其是用户已经离开房间的场景）
+            searchTask?.cancel()
+            searchDataTask?.cancel()
         }
     }
 
@@ -271,8 +298,13 @@ struct MusicSheet: View {
                     TextField("输入歌名或歌手", text: $query)
                         .font(.system(size: 14))
                         .foregroundColor(VRTheme.text)
+                        .focused($searchFocused)
                         .submitLabel(.search)
-                        .onSubmit { runSearch(query) }
+                        .onSubmit {
+                            runSearch(query)
+                            // 按下键盘上的"搜索"就顺手收起键盘，直接看结果
+                            searchFocused = false
+                        }
                     if !query.isEmpty {
                         Button {
                             query = ""
@@ -294,7 +326,10 @@ struct MusicSheet: View {
                         .strokeBorder(VRTheme.border, lineWidth: 1)
                 )
 
-                Button("搜索") { runSearch(query) }
+                Button("搜索") {
+                    runSearch(query)
+                    searchFocused = false
+                }
                     .buttonStyle(VRButtonStyle(kind: .primary))
             }
             .onChange(of: query) { _ in
@@ -339,8 +374,13 @@ struct MusicSheet: View {
                 .font(.system(size: 12))
                 .foregroundColor(VRTheme.textDim)
 
-            ForEach(results) { song in
-                songRow(song)
+            // LazyVStack 而不是 VStack：一次搜索最多返回 40 首，
+            // 用 VStack 会把 40 行（每行都带头像/按钮）一次性全建出来，
+            // 搜索刚出结果那一帧就会明显卡一下。懒加载只建屏幕内的几行。
+            LazyVStack(alignment: .leading, spacing: 9) {
+                ForEach(results) { song in
+                    songRow(song)
+                }
             }
         }
     }
@@ -692,12 +732,21 @@ struct MusicSheet: View {
     private func runSearch(_ q: String) {
         searchState = .loading
         let key = q.trimmingCharacters(in: .whitespaces)
-        MusicAPI.search(key) { result in
+        // 序号 + 取消：保证"界面上的结果"永远属于"最后一次输入"。
+        // 光靠防抖不够 —— 防抖只取消那个还没到点的定时器，已经在飞的网络请求不会停，
+        // 于是敲得快一点就会有 3~4 个请求同时跑，先回来的旧关键词结果会先闪一下。
+        searchSeq += 1
+        let seq = searchSeq
+        searchDataTask?.cancel()
+        searchDataTask = MusicAPI.search(key) { result in
+            guard seq == searchSeq else { return }   // 迟到的旧结果，丢掉
             switch result {
             case .success(let list):
                 results = list
                 searchState = list.isEmpty ? .empty : .idle
             case .failure(let err):
+                // 我们自己 cancel 掉的那次不算失败，不弹错误
+                if (err as NSError).code == NSURLErrorCancelled { return }
                 searchState = .failed(err.localizedDescription)
             }
         }

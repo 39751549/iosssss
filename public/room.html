@@ -317,6 +317,16 @@ function onMsg(m) {
       if (ME) { ME.coins = m.data.coins; ME.charm = m.data.charm; VR.LS.set('user', ME); updateCoinUI(); }
       break;
 
+    // 服务端送礼后不再整房重推快照，改推这条轻量消息：只更新「数据变了的那个人」
+    case 'charm:update': {
+      // 服务端把「本次送礼导致变动的所有人」合并成一条批量消息（users 数组）。
+      // 仍然兼容旧的单对象格式（user），避免老客户端/回滚时收不到。
+      const d = m.data || {};
+      if (Array.isArray(d.users)) d.users.forEach(applyUserUpdate);
+      else applyUserUpdate(d.user);
+      break;
+    }
+
     case 'error':
       VR.toast(m.msg || '操作失败', 'err');
       break;
@@ -488,9 +498,31 @@ function takeSeat(i) {
   }
 }
 
+/**
+ * 只更新「一个人」的金币/魅力值。
+ * 送礼后服务端不再向全房重推完整快照（那在连击送礼时等于每秒几十次全量下发），
+ * 改成推这条轻量消息；开着成员列表/名片的话就地刷新那个数字。
+ */
+function applyUserUpdate(u) {
+  if (!u || !u.id) return;
+  if (ME && ME.id === u.id) {
+    ME.coins = u.coins; ME.charm = u.charm;
+    VR.LS.set('user', ME); updateCoinUI();
+  }
+  if (!STATE) return;
+  let hit = false;
+  STATE.members.forEach(m => { if (m.user && m.user.id === u.id) { m.user = u; hit = true; } });
+  if (!hit) return;
+  if (document.getElementById('sheetMembers').classList.contains('show')) renderMembers(STATE);
+  const card = document.getElementById('modalCard');
+  if (card.classList.contains('show') && selTargetClientId) {
+    const m = STATE.members.find(x => x.clientId === selTargetClientId);
+    if (m && m.user.id === u.id) openCard(selTargetClientId);
+  }
+}
+
 /* ---------- 成员列表 ---------- */
-function renderMembers(s) {
-  document.getElementById('memberCount').textContent = s.members.length + ' 人在房';
+function renderMembers(s) {  document.getElementById('memberCount').textContent = s.members.length + ' 人在房';
   const box = document.getElementById('memberList');
   box.innerHTML = s.members.map(m => {
     const isHost = m.clientId === s.hostClientId;

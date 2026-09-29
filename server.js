@@ -201,22 +201,79 @@ function loadStore() {
 }
 let saveTimer = null;
 let saveWarned = false;
+/** 是否已有一轮落盘在写（写盘是异步的，避免并发写同一个文件） */
+let savingNow = false;
+/** 写盘期间又来了新改动 → 写完再补一轮，保证不丢最后一次修改 */
+let saveDirty = false;
+
+/** 标记「数据脏了」，400ms 内合并成一次落盘 */
 function saveStore() {
   if (saveTimer) return;
   saveTimer = setTimeout(() => {
     saveTimer = null;
-    try {
-      fs.mkdirSync(DATA_DIR, { recursive: true });
-      fs.writeFileSync(DATA_FILE, JSON.stringify(store, null, 2), 'utf8');
-    } catch (e) {
-      if (!saveWarned) {
-        saveWarned = true;
-        console.warn('[store] 无法写入数据文件（云端只读文件系统？）：' + e.message);
-        console.warn('[store] 数据将只保存在内存中，重启后丢失。建议挂载持久卷并设置 DATA_DIR。');
-      }
-    }
+    flushStore();
   }, 400);
 }
+
+function warnSave(e) {
+  if (saveWarned) return;
+  saveWarned = true;
+  console.warn('[store] 无法写入数据文件（云端只读文件系统？）：' + e.message);
+  console.warn('[store] 数据将只保存在内存中，重启后丢失。建议挂载持久卷并设置 DATA_DIR。');
+}
+
+/**
+ * 落盘（异步 + 原子替换）。
+ *
+ * 性能上改了两点：
+ *   1. `JSON.stringify(store)` 不再带缩进 —— 缩进版体积约大 1.6 倍，序列化本身也更慢，
+ *      而这个文件每次发言/送礼/进出房都要写一遍，是常驻热点。
+ *   2. 从 `writeFileSync` 改成异步写「临时文件 → rename」。
+ *      原来同步写会把 Node 的事件循环整个卡住（房间人一多、聊天记录一长，
+ *      一次写盘就能让所有 WebSocket 消息延迟几百毫秒）；rename 在同一个文件系统内是原子的，
+ *      顺带修掉「写到一半进程被杀 → store.json 变成半截 JSON → 重启直接丢全部数据」。
+ */
+function flushStore() {
+  if (savingNow) { saveDirty = true; return; }
+  savingNow = true;
+  let text;
+  try {
+    text = JSON.stringify(store);
+  } catch (e) {
+    savingNow = false;
+    console.error('[store] 序列化失败：' + e.message);
+    return;
+  }
+  const tmp = DATA_FILE + '.tmp';
+  fs.mkdir(DATA_DIR, { recursive: true }, () => {
+    fs.writeFile(tmp, text, 'utf8', (err) => {
+      if (err) {
+        savingNow = false;
+        warnSave(err);
+        return;
+      }
+      fs.rename(tmp, DATA_FILE, (err2) => {
+        savingNow = false;
+        if (err2) warnSave(err2);
+        if (saveDirty) { saveDirty = false; flushStore(); }
+      });
+    });
+  });
+}
+
+/** 退出前同步补一次落盘：防抖窗口里的那次改动不会因为重启/被 kill 而丢 */
+function flushStoreSync() {
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(DATA_FILE, JSON.stringify(store), 'utf8');
+  } catch (e) {
+    warnSave(e);
+  }
+}
+process.on('SIGTERM', () => { flushStoreSync(); process.exit(0); });
+process.on('SIGINT', () => { flushStoreSync(); process.exit(0); });
+
 loadStore();
 
 /* ================= 工具 ================= */
@@ -851,6 +908,23 @@ function pushSnapshot(roomId) {
   if (snap) broadcast(roomId, { type: 'room:state', data: snap });
 }
 
+/**
+ * 公屏写入 + 长度上限。
+ *
+ * 房间是长期的（qq 群式永久房），原来只有用户聊天那条分支做了 200 条截断，
+ * 「进入房间 / 离开房间 / 送礼升级」这几类系统消息是只进不出的 ——
+ * 房间开一天下来 chatLog 能涨到几万条，而每次 pushSnapshot 都要 slice 一遍、
+ * 内存也一直被占着。这里统一收口。
+ */
+const CHAT_LOG_MAX = 200;
+function pushChatLog(rt, msg) {
+  rt.chatLog.push(msg);
+  if (rt.chatLog.length > CHAT_LOG_MAX) {
+    rt.chatLog.splice(0, rt.chatLog.length - CHAT_LOG_MAX);
+  }
+  return msg;
+}
+
 function leaveRoom(clientId, roomId) {
   const rt = runtime.get(roomId); if (!rt) return;
   const me = rt.members.get(clientId); if (!me) return;
@@ -859,7 +933,7 @@ function leaveRoom(clientId, roomId) {
   broadcast(roomId, { type: 'peer:bye', data: { clientId } });
   if (u) {
     const sys = { id: uid('m'), sys: true, text: `${u.name} 离开了房间`, at: Date.now() };
-    rt.chatLog.push(sys); broadcast(roomId, { type: 'chat', data: sys });
+    pushChatLog(rt, sys); broadcast(roomId, { type: 'chat', data: sys });
   }
   if (rt.members.size === 0) runtime.delete(roomId);
   else pushSnapshot(roomId);
@@ -1130,7 +1204,7 @@ wss.on('connection', (ws) => {
         }
         pushSnapshot(room.id);
         const sys = { id: uid('m'), sys: true, text: `${user.name} 进入了房间`, at: Date.now() };
-        rt.chatLog.push(sys); broadcast(room.id, { type: 'chat', data: sys });
+        pushChatLog(rt, sys); broadcast(room.id, { type: 'chat', data: sys });
         break;
       }
 
@@ -1251,7 +1325,7 @@ wss.on('connection', (ws) => {
         const text = safeStr(msg.text, 200);
         if (!text) return;
         const m = { id: uid('m'), userId: u.id, name: u.name, avatar: u.avatar, vip: u.vip, vipLevel: u.vipLevel, text, at: Date.now() };
-        rt.chatLog.push(m); if (rt.chatLog.length > 200) rt.chatLog.shift();
+        pushChatLog(rt, m);
         broadcast(joinedRoom, { type: 'chat', data: m });
         break;
       }
@@ -1265,39 +1339,78 @@ wss.on('connection', (ws) => {
         const cost = gift.price * count;
         if (from.coins < cost) return reply({ type: 'error', msg: '金币不足，去后台领一点吧' });
 
-        from.coins -= cost; from.charm += gift.charm * count;
-        const toMember = [...rt.members.values()].find(m => m.clientId === msg.toClientId);
-        if (toMember) {
-          const to = store.users[toMember.userId];
-          if (to) to.charm += gift.charm * count;
-        }
+        // 收礼人：带 clientId 就只送那一个；**空的表示"全房间"** → 房间里除自己之外的所有人。
+        // （以前客户端把"全房间"退化成 members.first，界面上写着全房、实际只送给第一个人。）
+        const all = [...rt.members.values()];
+        const targets = msg.toClientId
+          ? all.filter(m => m.clientId === msg.toClientId)
+          : all.filter(m => m.userId !== from.id);
+
+        const gain = gift.charm * count;
+        from.coins -= cost;
+        from.charm += gain;
+
         // VIP 等级与刷礼物（魅力值）挂钩：达标自动晋升并全房广播
         const sysMsgs = [];
         const upFrom = recomputeVip(from);
         if (upFrom) sysMsgs.push(`🎉 ${from.name} 魅力值达到 ${from.charm}，晋升 VIP${upFrom}！`);
-        if (toMember) {
-          const upTo = recomputeVip(store.users[toMember.userId]);
-          if (upTo) sysMsgs.push(`🎉 ${store.users[toMember.userId].name} 收礼升级，晋升 VIP${upTo}！`);
+
+        // 谁的数据变了 → 合并成**一条**消息推给全房，而不是每人一条全房广播。
+        // 全房送礼时 changed = 送礼人 + 每个收礼人，逐个 broadcast 是 O(n) 条全员消息
+        // （9 人房送一次礼 = 9 条 × 9 收件人 = 81 次 send）。合并后只有 1 条。
+        const changed = new Set([from.id]);
+        // 收礼人按 userId 去重：既挡住"送给自己"时魅力值翻倍，也挡住同账号残留记录重复加
+        const paid = new Set();
+        for (const m of targets) {
+          if (m.userId === from.id || paid.has(m.userId)) continue;
+          paid.add(m.userId);
+          const to = store.users[m.userId];
+          if (!to) continue;
+          to.charm += gain;
+          changed.add(to.id);
+          const upTo = recomputeVip(to);
+          if (upTo) sysMsgs.push(`🎉 ${to.name} 收礼升级，晋升 VIP${upTo}！`);
         }
+
         saveStore();
         broadcast(joinedRoom, { type: 'gift', data: {
-          id: uid('g'), from: publicUser(from), toClientId: msg.toClientId,
+          id: uid('g'), from: publicUser(from), toClientId: msg.toClientId || '',
           gift: { id: gift.id, name: gift.name, emoji: gift.emoji }, count, at: Date.now()
         }});
+
+        /*
+         * 这里原来跟了一句 pushSnapshot(joinedRoom)，已去掉。
+         *
+         * pushSnapshot 会向全房推一份**完整快照**（9 个成员 + 60 条聊天记录 + 歌单 + 礼物表），
+         * 而礼物是连击操作 —— 送 99 个礼物就是 99 次全量序列化 + 99 次全员下发，
+         * 房间里人多的时候会明显卡顿（这就是"送礼物卡"的主因）。
+         * 金币/魅力值本来就只需要广播给"变了的那几个人"，用 charm:update 精确推送即可：
+         * 客户端收到后会就地更新该成员的金币与魅力值（不收礼的人一个字节都不用收）。
+         */
+        const updates = [];
+        for (const uid2 of changed) {
+          const u = store.users[uid2];
+          if (u) updates.push(publicUser(u));
+        }
+        if (updates.length) {
+          broadcast(joinedRoom, { type: 'charm:update', data: { users: updates } });
+        }
+
         for (const t of sysMsgs) {
           const sm = { id: uid('m'), sys: true, text: t, at: Date.now() };
-          rt.chatLog.push(sm);
+          pushChatLog(rt, sm);
           broadcast(joinedRoom, { type: 'chat', data: sm });
         }
         reply({ type: 'coins:update', data: { coins: from.coins, charm: from.charm } });
-        if (toMember) sendTo(toMember.clientId, joinedRoom, { type: 'charm:update', data: { user: publicUser(store.users[toMember.userId]) } });
-        pushSnapshot(joinedRoom);
         break;
       }
 
       /* 加入歌单：支持本地曲库 / 在线曲库（gd|源|歌id）/ 外链 */
       case 'music:add': {
         const rt = runtime.get(joinedRoom); if (!rt) return;
+        // 点歌人：直接用**这条连接**在房间里的身份，不信任报文里的 userId。
+        // 客户端要按它把「正在播放的歌是谁点的」那个麦位点亮，所以必须落进歌曲对象里。
+        const asker = (rt.members.get(clientId) || {}).userId || safeStr(msg.userId, 40);
 
         let song = null;
         const gd = parseGdLibraryId(msg.libraryId);
@@ -1307,11 +1420,12 @@ wss.on('connection', (ws) => {
             id: uid('s'), title: safeStr(msg.title, 60) || '在线歌曲',
             artist: safeStr(msg.artist, 80),
             url: '', libraryId: String(msg.libraryId), remote: true,
-            by: safeStr(msg.by, 20), at: Date.now()
+            by: safeStr(msg.by, 20), byUserId: asker, at: Date.now()
           };
           const exist = rt.playlist.find(s => s.libraryId === song.libraryId);
           if (exist) {
             await resolveSongUrl(exist);
+            exist.byUserId = asker; exist.by = song.by;
             rt.currentSong = exist; rt.playing = true; rt.startedAt = Date.now();
             pushSnapshot(joinedRoom);
             return reply({ type: 'music:playing', data: { title: exist.title } });
@@ -1326,19 +1440,22 @@ wss.on('connection', (ws) => {
             url: '/api/music/file/' + item.id,
             libraryId: item.id,
             by: safeStr(msg.by, 20),
+            byUserId: asker,
             at: Date.now()
           };
         } else {
           const url2 = safeStr(msg.url, 500);
           if (!/^https?:\/\//i.test(url2)) return reply({ type: 'error', msg: '请填写 http(s) 开头的音频地址' });
           song = { id: uid('s'), title: safeStr(msg.title, 60) || '未知歌曲',
-                   artist: safeStr(msg.artist, 60), url: url2, by: safeStr(msg.by, 20), at: Date.now() };
+                   artist: safeStr(msg.artist, 60), url: url2, by: safeStr(msg.by, 20),
+                   byUserId: asker, at: Date.now() };
         }
 
         // 本地/外链歌曲按 url 去重
         if (!song.remote) {
           const exist = rt.playlist.find(s => s.url === song.url);
           if (exist) {
+            exist.byUserId = asker; exist.by = song.by;
             rt.currentSong = exist; rt.playing = true; rt.startedAt = Date.now();
             pushSnapshot(joinedRoom);
             return reply({ type: 'music:playing', data: { title: exist.title } });
@@ -1363,6 +1480,7 @@ wss.on('connection', (ws) => {
       /* 立即点播（替换当前歌曲；本地曲库 / 在线曲库均可） */
       case 'music:play-now': {
         const rt = runtime.get(joinedRoom); if (!rt) return;
+        const asker = (rt.members.get(clientId) || {}).userId || safeStr(msg.userId, 40);
         const gd = parseGdLibraryId(msg.libraryId);
         let song;
         if (gd) {
@@ -1370,7 +1488,7 @@ wss.on('connection', (ws) => {
             id: uid('s'), title: safeStr(msg.title, 60) || '在线歌曲',
             artist: safeStr(msg.artist, 80),
             url: '', libraryId: String(msg.libraryId), remote: true,
-            by: safeStr(msg.by, 20), at: Date.now()
+            by: safeStr(msg.by, 20), byUserId: asker, at: Date.now()
           };
           try { song.url = await gdResolveUrl(gd.source, gd.songId, 320); }
           catch { return reply({ type: 'error', msg: '这首歌曲暂时拿不到播放地址，换一首试试' }); }
@@ -1382,13 +1500,14 @@ wss.on('connection', (ws) => {
             title: safeStr(msg.title, 60) || item.title,
             artist: safeStr(msg.artist, 80) || item.artist || '',
             url: '/api/music/file/' + item.id, libraryId: item.id,
-            by: safeStr(msg.by, 20), at: Date.now()
+            by: safeStr(msg.by, 20), byUserId: asker, at: Date.now()
           };
         }
         const exist = rt.playlist.find(s => s.libraryId && s.libraryId === song.libraryId);
         if (!exist) rt.playlist.push(song);
         rt.currentSong = exist || song;
         rt.currentSong.url = song.url; // 重新解析，避免直链过期
+        rt.currentSong.byUserId = asker; rt.currentSong.by = song.by;
         rt.playing = true; rt.startedAt = Date.now();
         pushRecent((rt.members.get(clientId) || {}).userId, rt.currentSong);
         pushSnapshot(joinedRoom);

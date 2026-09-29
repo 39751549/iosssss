@@ -233,7 +233,7 @@ enum VRServerMessage {
     case chat(VRChatMessage)
     case gift(VRGiftEvent)
     case coinsUpdate(coins: Int, charm: Int)
-    case charmUpdate(VRUser)
+    case charmUpdate([VRUser])
     case rtcOffer(from: String, sdp: String)
     case rtcAnswer(from: String, sdp: String)
     case rtcIce(from: String, candidate: [String: Any])
@@ -328,8 +328,15 @@ enum VRServerMessage {
             return .coinsUpdate(coins: c, charm: ch)
 
         case "charm:update":
-            guard let d = data, let u = decode(VRUser.self, d["user"]) else { return .unknown(type) }
-            return .charmUpdate(u)
+            guard let d = data else { return .unknown(type) }
+            // 服务端把一次送礼里所有变动的人合并成 users 数组，减少全房广播次数；
+            // 旧格式（单个 user）仍要能解析，回滚服务端时才不会瞎眼。
+            if let arr = d["users"] as? [[String: Any]] {
+                let us = arr.compactMap { decode(VRUser.self, $0) }
+                return us.isEmpty ? .unknown(type) : .charmUpdate(us)
+            }
+            guard let u = decode(VRUser.self, d["user"]) else { return .unknown(type) }
+            return .charmUpdate([u])
 
         case "rtc:offer":
             guard let from = json["from"] as? String,

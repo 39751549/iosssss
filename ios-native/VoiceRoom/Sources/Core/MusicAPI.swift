@@ -100,10 +100,16 @@ struct VRMusicRecord: Codable, Identifiable, Equatable {
 enum MusicAPI {
 
     /// 搜索曲库。q 为空时返回全部（最多 40 首）
-    static func search(_ query: String, completion: @escaping (Result<[VRLibrarySong], Error>) -> Void) {
+    ///
+    /// 返回值是那条 URLSession 任务：**调用方要负责在发起新搜索前把它 cancel 掉**，
+    /// 否则快速连续输入会同时挂好几个在飞的请求，谁先回来还不一定 ——
+    /// 界面会先闪一下旧关键词的结果，再被新结果盖掉。
+    @discardableResult
+    static func search(_ query: String,
+                       completion: @escaping (Result<[VRLibrarySong], Error>) -> Void) -> URLSessionDataTask? {
         guard let base = VRConfig.baseURL else {
             completion(.failure(VRAPIError.noServer))
-            return
+            return nil
         }
 
         var comps = URLComponents(url: base.appendingPathComponent("api/music/search"),
@@ -111,14 +117,14 @@ enum MusicAPI {
         comps?.queryItems = [URLQueryItem(name: "q", value: query)]
         guard let url = comps?.url else {
             completion(.failure(VRAPIError.badURL))
-            return
+            return nil
         }
 
         var req = URLRequest(url: url)
         req.timeoutInterval = 15
         req.cachePolicy = .reloadIgnoringLocalCacheData
 
-        URLSession.shared.dataTask(with: req) { data, _, err in
+        let task = URLSession.shared.dataTask(with: req) { data, _, err in
             if let err {
                 DispatchQueue.main.async { completion(.failure(err)) }
                 return
@@ -133,7 +139,9 @@ enum MusicAPI {
             } catch {
                 DispatchQueue.main.async { completion(.failure(error)) }
             }
-        }.resume()
+        }
+        task.resume()
+        return task
     }
 
     private struct SearchResponse: Decodable {

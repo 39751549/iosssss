@@ -38,7 +38,7 @@ struct RootView: View {
 
                 // 房间最小化 → 圆形悬浮球（可拖动，点击回到房间）
                 if app.inRoom && app.roomMinimized {
-                    FloatingRoomBall()
+                    FloatingRoomBall(activity: app.activity)
                         .zIndex(50)
                 }
 
@@ -97,6 +97,8 @@ struct RootView: View {
 /// 可拖动的圆形悬浮球：显示房间活跃状态，点击回到房间
 struct FloatingRoomBall: View {
     @EnvironmentObject var app: AppState
+    /// 说话状态单独订阅（它高频变化，不该挂在 AppState 上连累其余视图）
+    @ObservedObject var activity: VoiceActivity
 
     @State private var position: CGPoint = CGPoint(x: UIScreen.main.bounds.width - 52,
                                                    y: UIScreen.main.bounds.height * 0.24)
@@ -104,7 +106,7 @@ struct FloatingRoomBall: View {
 
     private var speakingCount: Int {
         guard let st = app.roomState else { return 0 }
-        return st.members.filter { app.speakingIds.contains($0.clientId) }.count
+        return st.members.filter { activity.speakingIds.contains($0.clientId) }.count
     }
 
     var body: some View {

@@ -33,6 +33,8 @@ final class AppState: ObservableObject {
     @Published var messages: [VRChatMessage] = []
     @Published var giftList: [VRGift] = []
     @Published var giftAnimations: [GiftAnimation] = []
+    /// VIP 发言飘屏（VIP 在公屏说话时额外飘一条大字横幅）
+    @Published var chatMarquees: [ChatMarquee] = []
 
     /// 当前房间的背景图（自定义图 / GIF）。
     ///
@@ -47,7 +49,13 @@ final class AppState: ObservableObject {
     // MARK: 语音
     @Published var micEnabled = false
     @Published var speakerEnabled = true
-    @Published var speakingIds: Set<String> = []
+    /// 「谁在说话」是**高频变化**的数据：有人开口/闭口就变一次，多人轮流聊天时每秒能变好几次。
+    ///
+    /// 它故意单独放在 `VoiceActivity` 里，不和 AppState 的其他状态混在一起：
+    /// AppState 是个大对象，任何一个 `@Published` 变化都会让所有持有 `@EnvironmentObject var app`
+    /// 的视图重新求值 —— 房间页、大厅、悬浮球全都得跟着重算一遍 body。
+    /// 把说话状态摘出去之后，说话时只有真正订阅了它的麦位区/成员列表会重算。
+    let activity = VoiceActivity()
 
     // MARK: 提示
     @Published var toast: ToastMessage?
@@ -79,6 +87,19 @@ final class AppState: ObservableObject {
         roomState?.member(clientId: clientId)
     }
 
+    /// 房主是不是 VIP —— 决定房间要不要走「金色闪光」氛围。
+    /// 取的是房间快照里 ownerId 那个人的实时 VIP 状态，房主一升级全房立刻变金色。
+    var isVipRoom: Bool {
+        guard let st = roomState, !st.room.ownerId.isEmpty else { return false }
+        return st.members.first { $0.user.id == st.room.ownerId }?.user.vip ?? false
+    }
+
+    /// 当前正在播放的歌是谁点的（userId）。麦位拿它点亮「点歌人」标识。
+    var songRequesterId: String {
+        guard let st = roomState, st.currentSong != nil else { return "" }
+        return st.currentSong?.byUserId ?? ""
+    }
+
     // MARK: - 生命周期
 
     init() {
@@ -87,7 +108,7 @@ final class AppState: ObservableObject {
         }
         // 语音引擎回调
         voice.onSpeakingChanged = { [weak self] ids in
-            self?.speakingIds = ids
+            self?.activity.speakingIds = ids
         }
         // 音乐播完 → 上报服务端按播放模式推进歌单
         MusicPlayer.shared.onPlaybackEnded = { [weak self] in
@@ -313,6 +334,8 @@ final class AppState: ObservableObject {
             if !messages.contains(where: { $0.id == m.id }) {
                 messages.append(m)
                 if messages.count > 200 { messages.removeFirst(messages.count - 200) }
+                // VIP 发言额外飘一条横幅（普通用户不飘，否则公屏一热就满天飞）
+                if m.vip == true && !m.isSystem { pushChatMarquee(m) }
             }
 
         case let .gift(ev):
@@ -323,12 +346,28 @@ final class AppState: ObservableObject {
             me?.charm = charm
             if let u = me { LocalStore.saveUser(u) }
 
-        case let .charmUpdate(user):
-            // 更新房间里那个人的魅力值
-            if var st = roomState,
-               let idx = st.members.firstIndex(where: { $0.user.id == user.id }) {
-                st.members[idx].user = user
-                roomState = st
+        case let .charmUpdate(users):
+            // 服务端把「本次送礼导致变动的所有人」合并成一条消息推过来
+            // （送礼人 + 每个收礼人）。这里一次性就地替换这些成员，
+            // 而不是收一份完整快照 —— 收礼的人越多，省下的序列化/下发越多。
+            if var st = roomState, !users.isEmpty {
+                var hit = false
+                for u in users {
+                    if let idx = st.members.firstIndex(where: { $0.user.id == u.id }) {
+                        st.members[idx].user = u
+                        hit = true
+                    }
+                }
+                // 顺带刷新自己的资料：送礼也会涨自己的魅力值
+                if let mine = users.first(where: { $0.id == me?.id }) {
+                    me?.coins = mine.coins
+                    me?.charm = mine.charm
+                    // 服务端已经算好 VIP 等级，直接同步，省一次全量刷新
+                    me?.vip = mine.vip
+                    me?.vipLevel = mine.vipLevel
+                    if let m = me { LocalStore.saveUser(m) }
+                }
+                if hit { roomState = st }
             }
 
         case let .roomNoOK(no):
@@ -433,6 +472,10 @@ final class AppState: ObservableObject {
         roomMinimized = false
         roomState = nil
         messages = []
+        giftAnimations = []
+        chatMarquees = []
+        comboToken = [:]
+        activity.speakingIds = []
         clientId = ""
         lastRoomId = ""
         micEnabled = false
@@ -655,25 +698,97 @@ final class AppState: ObservableObject {
         showToast("\(next.icon) \(next.label)", kind: .success)
     }
 
-    // MARK: - 礼物动画
+    // MARK: - 礼物 / 发言飘屏
+
+    /// 礼物飘屏分三档（按礼物单价），档位越高特效越"大"：
+    /// - `.small` 小礼物 → 右侧飘屏
+    /// - `.mid`   中档   → 底部横幅 + 头像飞入
+    /// - `.big`   大礼物 → 全屏爆炸 + 底部横幅
+    enum GiftTier: Int, Equatable { case small = 1, mid = 2, big = 3 }
 
     struct GiftAnimation: Identifiable, Equatable {
         let id: String
+        /// 连击归并键：同一送礼人 → 同一收礼人 → 同一礼物
+        let comboKey: String
+        let fromName: String
+        let fromAvatar: String
+        let toName: String
         let emoji: String
-        let text: String
+        let giftName: String
+        /// 连击数量（这一条上已经累加了几份）
+        var count: Int
+        let tier: GiftTier
     }
 
+    /// VIP 发言飘屏
+    struct ChatMarquee: Identifiable, Equatable {
+        let id: String
+        let name: String
+        let avatar: String
+        let text: String
+        let vipLevel: Int
+    }
+
+    /// 每条飘屏的「续期令牌」：连击时换发新令牌，4 秒后到点的旧令牌会被丢弃。
+    /// 这样既不需要维护定时器，连击过程中飘屏也不会中途消失。
+    private var comboToken: [String: UUID] = [:]
+
+    /// 一次「送出礼物」事件 → 飘屏。
+    ///
+    /// 连击归并：同一个人对同一个人连送同一种礼物，只累加数量、不新增条目 ——
+    /// 连点 20 次只占一条（显示 ×20），既好看也不会把屏幕糊满，
+    /// 顺带把动画数量从"每次一份"压到"最多 3 份同时跑"。
     private func pushGiftAnimation(_ ev: VRGiftEvent) {
-        let targetName = roomState?.members.first { $0.clientId == ev.toClientId }?.user.name ?? "房间"
-        let anim = GiftAnimation(
-            id: ev.id,
-            emoji: ev.gift.emoji,
-            text: "\(ev.from.name) 送出 \(ev.gift.name) ×\(ev.count)\n→ \(targetName)"
-        )
+        let price = giftList.first { $0.id == ev.gift.id }?.price ?? 0
+        let tier: GiftTier = price >= 10000 ? .big : (price >= 1000 ? .mid : .small)
+        let key = "\(ev.from.id)|\(ev.toClientId ?? "")|\(ev.gift.id)"
+        let toName = roomState?.members.first { $0.clientId == ev.toClientId }?.user.name ?? "全房间"
+
+        if let idx = giftAnimations.firstIndex(where: { $0.comboKey == key }) {
+            giftAnimations[idx].count += ev.count
+            armGiftRemoval(giftAnimations[idx].id)
+            return
+        }
+
+        let anim = GiftAnimation(id: ev.id, comboKey: key,
+                                 fromName: ev.from.name, fromAvatar: ev.from.avatar,
+                                 toName: toName, emoji: ev.gift.emoji,
+                                 giftName: ev.gift.name, count: ev.count, tier: tier)
         giftAnimations.append(anim)
-        // 3.4 秒后自动移除
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.4) { [weak self] in
-            self?.giftAnimations.removeAll { $0.id == anim.id }
+        // 同时最多 3 条：超出的顶掉最旧的
+        if giftAnimations.count > 3 {
+            let dropped = Array(giftAnimations.prefix(giftAnimations.count - 3)).map(\.id)
+            giftAnimations.removeFirst(giftAnimations.count - 3)
+            for d in dropped { comboToken[d] = nil }
+        }
+        armGiftRemoval(anim.id)
+    }
+
+    private func armGiftRemoval(_ id: String) {
+        let token = UUID()
+        comboToken[id] = token
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.2) { [weak self] in
+            guard let self, self.comboToken[id] == token else { return }
+            self.comboToken[id] = nil
+            self.giftAnimations.removeAll { $0.id == id }
+        }
+    }
+
+    /// VIP 在公屏说话 → 飘一条大字横幅。
+    ///
+    /// 只认「刚发生」的消息：断线重连会整段重放历史公屏，
+    /// 不按时间过滤的话，一进房间就会飘出好几条早就说过的 VIP 消息。
+    private func pushChatMarquee(_ m: VRChatMessage) {
+        guard Date().timeIntervalSince1970 * 1000 - m.at < 15_000 else { return }
+        guard !chatMarquees.contains(where: { $0.id == m.id }) else { return }
+        chatMarquees.append(ChatMarquee(id: m.id,
+                                        name: m.name ?? "?",
+                                        avatar: m.avatar ?? "",
+                                        text: m.text,
+                                        vipLevel: m.vipLevel ?? 1))
+        if chatMarquees.count > 2 { chatMarquees.removeFirst(chatMarquees.count - 2) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.5) { [weak self] in
+            self?.chatMarquees.removeAll { $0.id == m.id }
         }
     }
 
@@ -693,6 +808,20 @@ final class AppState: ObservableObject {
             if self?.toast?.id == t.id { self?.toast = nil }
         }
     }
+}
+
+// MARK: - 说话状态（高频，单独成对象）
+
+/// 「谁在说话」。
+///
+/// 单独拿出来是因为它更新得**非常频繁**（WebRTC 每 0.35 秒探一次音量，
+/// 有人开口或闭嘴就推一次；多人轮流聊天时每秒好几次）。
+/// 如果它挂在 AppState 上，每次说话变化都会让所有持有 AppState 的视图重算 body ——
+/// 房间页要重算 9 个麦位 + 公屏 + 悬浮条，代价远大于"给两个头像加个绿圈"本身。
+/// 摘出来之后，只有真正订阅它的视图（麦位区、成员列表、悬浮球）会跟着刷新。
+@MainActor
+final class VoiceActivity: ObservableObject {
+    @Published var speakingIds: Set<String> = []
 }
 
 // MARK: - 本地持久化

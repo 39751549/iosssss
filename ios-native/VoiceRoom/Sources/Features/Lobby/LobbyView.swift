@@ -223,7 +223,10 @@ struct LobbyView: View {
                     showProfile = true
                 } label: {
                     HStack(spacing: 13) {
-                        VRAvatarFull(user: app.me, size: 56)
+                        VRAvatarFull(user: app.me, size: 56,
+                                     isMine: true,
+                                     vipLevel: app.me?.vip == true ? (app.me?.vipLevel ?? 1) : 0,
+                                     showNeutralRing: true)
                             .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
 
                         VStack(alignment: .leading, spacing: 4) {

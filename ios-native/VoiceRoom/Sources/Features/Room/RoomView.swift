@@ -37,12 +37,27 @@ struct RoomView: View {
 
     @FocusState private var chatFocused: Bool
 
+    /// 长按麦位刚触发过（下麦 / 看名片）→ 这个触摸后续的"抬手点击"要丢掉。
+    ///
+    /// 麦位的 Button 和 LongPressGesture 是 `simultaneousGesture` 并联识别的关系：
+    /// 长按到 0.42 秒时回调先触发，但手指抬起时 Button 的 action **照样**会触发一次。
+    /// 结果是「长按自己下麦」会连带把名片弹出来、「长按别人看名片」会弹两次。
+    /// 用这个标志在抬手那一下把点击吞掉。
+    @State private var suppressSeatTap = false
+
     /// 麦位数量：0 = 房主专位，1-8 = 宾客（与服务端 9 座位一致）
     private let seatCount = 9
 
     var body: some View {
         ZStack {
             backgroundLayer
+
+            // 房主是 VIP → 一层金色流光 + 闪烁星点（纯氛围层，不吃点击）
+            if app.isVipRoom {
+                GoldShimmerLayer()
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+            }
 
             VStack(spacing: 0) {
                 topBar
@@ -80,7 +95,7 @@ struct RoomView: View {
         .sheet(isPresented: $showMembers) {
             // 名片由成员列表自己弹（嵌套 sheet），这里不再"收起列表再弹名片"——
             // 那种写法会让 iOS 的两个 sheet 互相打架，表现为名片无限打开又关闭
-            MemberSheet(state: state).environmentObject(app)
+            MemberSheet(state: state, activity: app.activity).environmentObject(app)
         }
         .sheet(isPresented: $showSettings) {
             RoomSettingsSheet(state: state).environmentObject(app)
@@ -148,7 +163,18 @@ struct RoomView: View {
                 let live = CGSize(width: committed.width + musicBarDrag.width,
                                   height: committed.height + musicBarDrag.height)
 
-                musicBarBody(song: song, width: barW)
+                MusicBarContent(
+                    song: song,
+                    playing: state.playing,
+                    modeIcon: state.mode.icon,
+                    expanded: musicBarExpanded,
+                    width: barW,
+                    onTogglePlay: { app.musicControl(state.playing ? "pause" : "play") },
+                    onOpenList: { showMusic = true },
+                    onCycleMode: { app.cyclePlayMode() },
+                    onCollapse: { setMusicBarExpanded(false) },
+                    onExpand: { setMusicBarExpanded(true) }
+                )
                     .scaleEffect(musicBarDrag != .zero ? 1.04 : 1)
                     .position(x: baseX + live.width, y: baseY + live.height)
                     .gesture(
@@ -207,127 +233,12 @@ struct RoomView: View {
                       height: min(max(o.height, minDY), maxDY))
     }
 
-    @ViewBuilder
-    private func musicBarBody(song: VRSong, width: CGFloat) -> some View {
-        if musicBarExpanded {
-            expandedMusicBar(song: song, width: width)
-        } else {
-            collapsedMusicBar(width: width)
-        }
-    }
-
-    /// 展开形态：播放/暂停 · 歌名+进度+倒计时 · 播放模式 · 收起
-    private func expandedMusicBar(song: VRSong, width: CGFloat) -> some View {
-        HStack(spacing: 8) {
-            Button {
-                app.musicControl(state.playing ? "pause" : "play")
-            } label: {
-                Text(state.playing ? "⏸" : "▶️")
-                    .font(.system(size: 15))
-                    .frame(width: 30, height: 30)
-            }
-            .buttonStyle(.plain)
-
-            // 点这里 → 打开完整歌单（"显示全部"）
-            Button {
-                showMusic = true
-            } label: {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(song.title)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(VRTheme.text)
-                        .lineLimit(1)
-
-                    HStack(spacing: 6) {
-                        GeometryReader { g in
-                            ZStack(alignment: .leading) {
-                                Capsule().fill(Color(hex: "27436B").opacity(0.16))
-                                Capsule()
-                                    .fill(VRTheme.brandGradient)
-                                    .frame(width: max(1.5, g.size.width * player.progressFraction))
-                            }
-                        }
-                        .frame(height: 3)
-
-                        Text("\(player.positionText)/\(player.durationText)")
-                            .font(.system(size: 9, weight: .medium, design: .monospaced))
-                            .foregroundColor(VRTheme.textMute)
-                            .fixedSize()
-                    }
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            // 播放模式
-            Button {
-                app.cyclePlayMode()
-            } label: {
-                Text(state.mode.icon)
-                    .font(.system(size: 14))
-                    .frame(width: 26, height: 30)
-            }
-            .buttonStyle(.plain)
-
-            // 收起成一个圆图标
-            Button {
-                setMusicBarExpanded(false)
-            } label: {
-                Text("⌄")
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundColor(VRTheme.textMute)
-                    .frame(width: 24, height: 30)
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .frame(width: width)
-        .musicBarChrome(corner: 15)
-    }
-
-    /// 折叠形态：一颗**透明的音符图标**（无底板，只靠图标本身 + 白色外发光保证可读），点一下展开
-    ///
-    /// 为什么不用白色圆形底板：折叠态本来就是个"最小占位"，画一块白底等于在房间背景上
-    /// 贴了一张不透明的圆片，既挡背景又和展开态的玻璃条视觉不统一。
-    /// 为什么不用白色图标：房间背景是明亮色系（天空蓝 / 樱花粉），白图标会糊进背景里。
-    /// 所以用品牌蓝画图标，再叠两层白色外发光当作描边，深浅背景都能看清。
-    private func collapsedMusicBar(width: CGFloat) -> some View {
-        ZStack {
-            // 环形进度：折叠时唯一能看到播放位置的地方。
-            // 只在真正播放时出现，且细到不会把图标"框"成一个按钮。
-            if state.playing {
-                Circle()
-                    .stroke(VRTheme.brand.opacity(0.16), lineWidth: 1.8)
-                Circle()
-                    .trim(from: 0, to: max(0.001, min(1, player.progressFraction)))
-                    .stroke(VRTheme.brand, style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                    .shadow(color: .white.opacity(0.9), radius: 2)
-            }
-
-            Image(systemName: "music.note")
-                .font(.system(size: 21, weight: .bold))
-                .foregroundColor(VRTheme.brand)
-                // 暂停时压暗一点，一眼区分"在放"和"没放"，但不换图标形状
-                .opacity(state.playing ? 1 : 0.5)
-                // 白色外发光（画两层）＝ 给图标描个白边，亮背景上也不会糊掉
-                .shadow(color: .white.opacity(0.95), radius: 2)
-                .shadow(color: .white.opacity(0.75), radius: 5)
-        }
-        .frame(width: width, height: width)
-        .contentShape(Circle())
-        .onTapGesture { setMusicBarExpanded(true) }
-    }
-
     private func setMusicBarExpanded(_ expanded: Bool) {
         withAnimation(.spring(response: 0.32, dampingFraction: 0.8)) {
             musicBarExpanded = expanded
         }
         UserDefaults.standard.set(expanded, forKey: Self.musicBarExpandedKey)
     }
-
-    @ObservedObject private var player = MusicPlayer.shared
 
     // MARK: - 顶栏
 
@@ -404,39 +315,21 @@ struct RoomView: View {
 
     // MARK: - 麦位区
 
+    /// 麦位区整体交给 `RoomStage`（见文件末尾）。
+    ///
+    /// 它是**唯一**订阅「谁在说话」的视图。说话状态一秒能变好几次（WebRTC 每 0.35 秒探一次音量），
+    /// 如果让 RoomView 自己读，那每次有人开口闭口，整个房间页 —— 9 个麦位 + 公屏 + 悬浮条 ——
+    /// 都要重算一遍 body。收敛到子视图之后，重算范围只剩这 9 个麦位。
     private var stage: some View {
-        VStack(spacing: 12) {
-            // 房主主位（0 号专位，顶部居中）
-            HostSeatCell(
-                member: state.member(atSeat: 0),
-                isMine: state.member(atSeat: 0)?.clientId == app.clientId,
-                speaking: isSpeaking(seat: 0),
-                onTap: { handleSeatTap(0) },
-                onLongPress: { handleSeatLongPress(0) }
-            )
-
-            // 宾客麦位 1-8（4 列 × 2 行）
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 4),
-                      spacing: 12) {
-                ForEach(1..<seatCount, id: \.self) { seat in
-                    SeatCell(
-                        seat: seat,
-                        member: state.member(atSeat: seat),
-                        isMine: state.member(atSeat: seat)?.clientId == app.clientId,
-                        speaking: isSpeaking(seat: seat),
-                        onTap: { handleSeatTap(seat) },
-                        onLongPress: { handleSeatLongPress(seat) }
-                    )
-                }
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.bottom, 14)
-    }
-
-    private func isSpeaking(seat: Int) -> Bool {
-        guard let m = state.member(atSeat: seat) else { return false }
-        return app.speakingIds.contains(m.clientId)
+        RoomStage(
+            state: state,
+            clientId: app.clientId,
+            vipRoom: app.isVipRoom,
+            requesterId: app.songRequesterId,
+            activity: app.activity,
+            onTap: { handleSeatTap($0) },
+            onLongPress: { handleSeatLongPress($0) }
+        )
     }
 
     /// 打开某人名片。
@@ -454,6 +347,9 @@ struct RoomView: View {
 
     /// 点头像 → 弹名片（不再下麦）；长按自己的麦位 → 下麦
     private func handleSeatTap(_ seat: Int) {
+        // 刚长按过的这次触摸，抬手时会再触发一次 Button 的 action —— 直接吞掉。
+        // 不吞的话：长按自己下麦会顺手把名片弹出来，长按别人会弹两次名片。
+        if suppressSeatTap { return }
         // 0 号位是房主专位：非房主不能上；有人时一律看名片
         if seat == 0 {
             if let m = state.member(atSeat: 0) {
@@ -476,9 +372,19 @@ struct RoomView: View {
         }
     }
 
+    /// 开始「这一次触摸不再当点击处理」的窗口。
+    /// 0.5 秒足够覆盖"长按回调触发 → 手指抬起"这一段，又短到不会误伤下一次真实点击。
+    private func markLongPressed() {
+        suppressSeatTap = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            suppressSeatTap = false
+        }
+    }
+
     /// 长按自己的麦位 → 下麦（避免误触）
     private func handleSeatLongPress(_ seat: Int) {
         guard let m = state.member(atSeat: seat) else { return }
+        markLongPressed()
         if m.clientId == app.clientId {
             app.takeSeat(-1)
             app.showToast("已下麦")
@@ -553,7 +459,10 @@ struct RoomView: View {
                 app.toggleMic()
             }
             barIcon("music.note",
-                    tint: MusicPlayer.shared.isPlaying ? VRTheme.brand : nil,
+                    // 用房间快照里的 playing，而不是去读 MusicPlayer 单例：
+                    // 单例的 isPlaying 不订阅就不会触发刷新，而 position 每 0.4 秒变一次，
+                    // 一旦在这里订阅它，整个房间页就得跟着每秒重算两次。
+                    tint: state.playing ? VRTheme.brand : nil,
                     symbol: true) {
                 showMusic = true
             }
@@ -672,18 +581,80 @@ struct RoomView: View {
         chatInput = ""
     }
 
-    // MARK: - 礼物飘屏
+    // MARK: - 礼物特效 / VIP 发言飘屏
 
     private var giftOverlay: some View {
-        VStack {
-            ForEach(app.giftAnimations) { anim in
-                GiftFlyingView(animation: anim)
+        RoomEffectLayer(animations: app.giftAnimations, marquees: app.chatMarquees)
+    }
+}
+
+// MARK: - 麦位区（房主主位 + 宾客位）
+
+/// 麦位区整体。
+///
+/// 单独成视图的唯一理由是「说话状态」：它挂在 `VoiceActivity` 上、变化非常频繁，
+/// 把订阅范围收敛到这里之后，有人开口闭口就只需要重算这 9 个麦位，
+/// 而不是整个房间页（公屏列表、悬浮音乐条、底部工具栏都不用跟着重算）。
+struct RoomStage: View {
+
+    let state: VRRoomState
+    let clientId: String
+    /// 房主是 VIP → 主位金色光环脉动
+    let vipRoom: Bool
+    /// 正在播放的这首歌是谁点的（userId）
+    let requesterId: String
+
+    @ObservedObject var activity: VoiceActivity
+
+    let onTap: (Int) -> Void
+    let onLongPress: (Int) -> Void
+
+    /// 0 = 房主专位，1-8 = 宾客（与服务端 9 座位一致）
+    private let seatCount = 9
+
+    var body: some View {
+        VStack(spacing: 12) {
+            // 房主主位（0 号专位，顶部居中）
+            HostSeatCell(
+                member: state.member(atSeat: 0),
+                isMine: state.member(atSeat: 0)?.clientId == clientId,
+                speaking: speaking(seat: 0),
+                requesting: isRequester(seat: 0),
+                vipPulse: vipRoom,
+                onTap: { onTap(0) },
+                onLongPress: { onLongPress(0) }
+            )
+
+            // 宾客麦位 1-8（4 列 × 2 行）
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 4),
+                      spacing: 12) {
+                ForEach(1..<seatCount, id: \.self) { seat in
+                    SeatCell(
+                        seat: seat,
+                        member: state.member(atSeat: seat),
+                        isMine: state.member(atSeat: seat)?.clientId == clientId,
+                        speaking: speaking(seat: seat),
+                        requesting: isRequester(seat: seat),
+                        onTap: { onTap(seat) },
+                        onLongPress: { onLongPress(seat) }
+                    )
+                }
             }
-            Spacer()
         }
-        .padding(.top, 76)
-        .padding(.horizontal, 16)
-        .allowsHitTesting(false)
+        .padding(.horizontal, 14)
+        .padding(.bottom, 14)
+    }
+
+    private func speaking(seat: Int) -> Bool {
+        guard let m = state.member(atSeat: seat) else { return false }
+        return activity.speakingIds.contains(m.clientId)
+    }
+
+    /// 是不是「正在播放的这首歌的点歌人」。
+    /// 用 userId 匹配而不是 clientId：同一个账号在快照里可能残留多条成员记录，clientId 会抖，userId 不会。
+    private func isRequester(seat: Int) -> Bool {
+        guard !requesterId.isEmpty, let m = state.member(atSeat: seat) else { return false }
+        return m.user.id == requesterId
     }
 }
 
@@ -694,6 +665,8 @@ struct SeatCell: View {
     let member: VRMember?
     let isMine: Bool
     let speaking: Bool
+    /// 我就是当前这首歌的点歌人 → 金色音符光环
+    var requesting: Bool = false
     let onTap: () -> Void
     let onLongPress: () -> Void
 
@@ -701,26 +674,30 @@ struct SeatCell: View {
         Button(action: onTap) {
             VStack(spacing: 6) {
                 ZStack {
+                    // 点歌光环：正在播放的这首歌是他点的（金色，和"正在说话"的绿色区分开）
+                    if requesting {
+                        RequestHalo(size: 62)
+                    }
                     // 说话光环：柔和呼吸光圈（说话时出现，不说时消失）
                     if speaking {
                         SpeakingHalo(size: 62, color: VRTheme.green)
                     }
 
                     if let member {
-                        VRAvatarFull(user: member.user, size: 52)
-                            .overlay(
-                                Circle().strokeBorder(
-                                    isMine ? VRTheme.brand : Color.white.opacity(0.55),
-                                    lineWidth: isMine ? 2 : 1.4
-                                )
-                            )
-                            .overlay(alignment: .bottomTrailing) {
+                        // 头像框统一由 VRAvatarFull 画：说话绿环 > VIP 分色环 > 自己蓝环 > 默认白边
+                        VRAvatarFull(user: member.user, size: 52,
+                                     isMine: isMine,
+                                     speaking: speaking,
+                                     vipLevel: member.user.vip ? member.user.vipLevel : 0,
+                                     showNeutralRing: true)
+                            // 静音标放左下角：右下角被 VIP 等级徽章占了，两个压一起会看不清
+                            .overlay(alignment: .bottomLeading) {
                                 if member.muted {
                                     ZStack {
                                         Circle().fill(Color.black.opacity(0.72)).frame(width: 19, height: 19)
                                         Text("🔇").font(.system(size: 9))
                                     }
-                                    .offset(x: 2, y: 2)
+                                    .offset(x: -2, y: 2)
                                 }
                             }
                             .opacity(member.muted ? 0.72 : 1)
@@ -750,7 +727,14 @@ struct SeatCell: View {
                     .background(Capsule().fill(Color.black.opacity(0.26)))
                     .frame(maxWidth: .infinity)
 
-                if let member, member.user.vip {
+                if requesting {
+                    Text("🎵 点歌")
+                        .font(.system(size: 9, weight: .heavy))
+                        .foregroundColor(Color(hex: "5A3600"))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1.5)
+                        .background(Capsule().fill(VRTheme.goldGradient))
+                } else if let member, member.user.vip {
                     VRBadge(kind: .vip, text: "VIP\(member.user.vipLevel)")
                         .scaleEffect(0.85)
                 }
@@ -762,6 +746,36 @@ struct SeatCell: View {
                 if member != nil { onLongPress() }
             }
         )
+    }
+}
+
+// MARK: - 点歌光环（金色，区别于说话的绿色）
+
+/// 谁点的歌谁亮：金色音符光环 + 缓慢脉动。和说话绿环用同一套节奏，但颜色不同，
+/// 一眼就能分清"这个人在说话"和"这首歌是他点的"。
+struct RequestHalo: View {
+    var size: CGFloat
+    @State private var pulse = false
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(VRTheme.gold.opacity(0.75), lineWidth: 2)
+                .frame(width: size + 8, height: size + 8)
+                .scaleEffect(pulse ? 1.07 : 0.97)
+                .opacity(pulse ? 0.7 : 1)
+            Circle()
+                .fill(VRTheme.gold.opacity(0.16))
+                .frame(width: size + 4, height: size + 4)
+                .blur(radius: 6)
+                .scaleEffect(pulse ? 1.05 : 0.99)
+        }
+        .shadow(color: VRTheme.gold.opacity(0.5), radius: 9)
+        .onAppear {
+            withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+                pulse = true
+            }
+        }
     }
 }
 
@@ -803,6 +817,10 @@ struct HostSeatCell: View {
     let member: VRMember?
     let isMine: Bool
     let speaking: Bool
+    /// 我就是当前这首歌的点歌人 → 金色音符光环
+    var requesting: Bool = false
+    /// 房主是 VIP → 主位常驻金色脉动光环（"VIP 房间闪闪发光"的落点之一）
+    var vipPulse: Bool = false
     let onTap: () -> Void
     let onLongPress: () -> Void
 
@@ -810,15 +828,27 @@ struct HostSeatCell: View {
         Button(action: onTap) {
             VStack(spacing: 5) {
                 ZStack(alignment: .top) {
-                    // 说话光环（柔和呼吸）
-                    if speaking {
+                    // 点歌光环（金色）—— 三种光环互斥，避免同一张头像上套三层
+                    if requesting {
+                        RequestHalo(size: 74)
+                    } else if speaking {
+                        // 说话光环（柔和呼吸）
                         SpeakingHalo(size: 74, color: VRTheme.green)
+                    } else if vipPulse {
+                        // 房主是 VIP：没人说话时主位常驻金色脉动，点出"这是 VIP 房"
+                        RequestHalo(size: 74)
                     }
 
                     // 头像（空位时为半透明虚线圆）
                     Group {
                         if let member {
-                            VRAvatarFull(user: member.user, size: 62)
+                            // 房主的金环 + 皇冠统一交给头像框画，这里不再叠第二层
+                            VRAvatarFull(user: member.user, size: 62,
+                                         isHost: true,
+                                         isMine: isMine,
+                                         speaking: speaking,
+                                         vipLevel: member.user.vip ? member.user.vipLevel : 0,
+                                         showNeutralRing: true)
                                 .opacity(member.muted ? 0.72 : 1)
                         } else {
                             ZStack {
@@ -833,26 +863,15 @@ struct HostSeatCell: View {
                         }
                     }
                     .frame(width: 70, height: 70)
-                    .overlay(
-                        Circle().strokeBorder(
-                            isMine ? VRTheme.brand : Color.white.opacity(0.55),
-                            lineWidth: isMine ? 2 : 1.2
-                        )
-                    )
-                    .overlay(alignment: .bottomTrailing) {
+                    // 静音标挪到左下角：右下角已经给了 VIP 等级徽章
+                    .overlay(alignment: .bottomLeading) {
                         if let member, member.muted {
                             ZStack {
                                 Circle().fill(Color.black.opacity(0.72)).frame(width: 20, height: 20)
                                 Text("🔇").font(.system(size: 9))
                             }
-                            .offset(x: 2, y: 2)
+                            .offset(x: -2, y: 2)
                         }
-                    }
-                    // 房主皇冠
-                    .overlay(alignment: .top) {
-                        Text("👑")
-                            .font(.system(size: 15))
-                            .offset(y: -12)
                     }
                 }
                 .frame(width: 76, height: 78)
@@ -903,7 +922,8 @@ struct ChatRow: View {
         } else {
             HStack(alignment: .top, spacing: 8) {
                 Button(action: onAvatarTap) {
-                    VRAvatarFull(user: tempUser, size: 26)
+                    VRAvatarFull(user: tempUser, size: 26,
+                                 vipLevel: message.vip == true ? (message.vipLevel ?? 1) : 0)
                 }
                 .buttonStyle(.plain)
 
@@ -956,44 +976,125 @@ struct ChatRow: View {
     }
 }
 
-// MARK: - 礼物飘屏动画
+// MARK: - 房间上层特效层（礼物 + VIP 发言飘屏）
 
-struct GiftFlyingView: View {
-    let animation: AppState.GiftAnimation
+/// 房间最上层：礼物特效 + VIP 发言飘屏。整层不吃触摸。
+///
+/// 分区摆放，避免互相压住：
+/// - 顶部 → VIP 发言飘屏（金色横幅）
+/// - 底部 → 小/中档礼物横幅
+/// - 全屏 → 大礼物爆炸（同时只播最新的一条）
+struct RoomEffectLayer: View {
+    let animations: [AppState.GiftAnimation]
+    let marquees: [AppState.ChatMarquee]
 
-    @State private var offsetX: CGFloat = 320
-    @State private var opacity: Double = 0
+    /// 小/中档礼物（走底部横幅；大礼物走全屏）
+    private var banners: [AppState.GiftAnimation] {
+        animations.filter { $0.tier != .big }
+    }
 
     var body: some View {
-        HStack(spacing: 10) {
+        ZStack {
+            // 大礼物：全屏爆炸。只取最新的一条，避免多个全屏动画同时跑
+            if let big = animations.last(where: { $0.tier == .big }) {
+                GiftBurstView(animation: big)
+                    .id(big.id)
+                    .transition(.opacity)
+            }
+
+            // 顶部：VIP 发言飘屏
+            VStack(spacing: 8) {
+                ForEach(marquees) { m in
+                    VipChatMarqueeView(marquee: m)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 72)
+            .padding(.horizontal, 14)
+
+            // 底部：礼物横幅（从右滑入，落在底部工具栏上方）
+            VStack(spacing: 8) {
+                Spacer(minLength: 0)
+                ForEach(banners) { a in
+                    GiftBannerView(animation: a)
+                }
+            }
+            .padding(.bottom, 108)
+            .padding(.horizontal, 14)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+// MARK: - 礼物横幅（小/中档）
+
+/// 礼物横幅：头像 + 礼物 + 「谁送给谁」+ 连击数。
+/// 中档（`tier == .mid`）做得更"重"一点：整条粉金渐变 + 更亮的描边与投影。
+struct GiftBannerView: View {
+    let animation: AppState.GiftAnimation
+
+    @State private var offsetX: CGFloat = 380
+    @State private var opacity: Double = 0
+    /// 连击跳动
+    @State private var pop = false
+
+    private var isMid: Bool { animation.tier == .mid }
+
+    /// 送礼人头像：飘屏里只带了头像路径，这里临时拼一个 user 给头像组件用
+    private var fromUser: VRUser {
+        VRUser(id: animation.comboKey, name: animation.fromName, avatar: animation.fromAvatar,
+               gender: .secret, bio: "", coins: 0, charm: 0, vip: false, vipLevel: 0)
+    }
+
+    var body: some View {
+        HStack(spacing: 9) {
+            VRAvatarFull(user: fromUser, size: 30)
+
             Text(animation.emoji)
-                .font(.system(size: 30))
+                .font(.system(size: isMid ? 26 : 22))
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(animation.text)
-                    .font(.system(size: 12.5, weight: .semibold))
+                Text("\(animation.fromName) → \(animation.toName)")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(VRTheme.textDim)
+                    .lineLimit(1)
+                Text("\(animation.giftName) ×\(animation.count)")
+                    .font(.system(size: 13, weight: .heavy))
                     .foregroundColor(VRTheme.text)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
+                    .lineLimit(1)
             }
 
             Spacer(minLength: 0)
+
+            if animation.count > 1 {
+                Text("连击 \(animation.count)")
+                    .font(.system(size: 10.5, weight: .heavy))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(VRTheme.pinkGradient))
+            }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
         .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: 15, style: .continuous)
                 .fill(
-                    LinearGradient(colors: [VRTheme.pink.opacity(0.34), VRTheme.brand.opacity(0.24)],
-                                   startPoint: .leading, endPoint: .trailing)
+                    LinearGradient(
+                        colors: isMid
+                            ? [VRTheme.pink.opacity(0.42), VRTheme.gold.opacity(0.34)]
+                            : [VRTheme.pink.opacity(0.28), VRTheme.brand.opacity(0.20)],
+                        startPoint: .leading, endPoint: .trailing
+                    )
                 )
                 .background(.ultraThinMaterial)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(VRTheme.pink.opacity(0.55), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 15, style: .continuous)
+                .strokeBorder(VRTheme.pink.opacity(isMid ? 0.75 : 0.45), lineWidth: isMid ? 1.6 : 1)
         )
-        .shadow(color: VRTheme.pink.opacity(0.3), radius: 12, y: 4)
+        .shadow(color: VRTheme.pink.opacity(isMid ? 0.45 : 0.28), radius: 12, y: 4)
+        .scaleEffect(pop ? 1.06 : 1)
         .offset(x: offsetX)
         .opacity(opacity)
         .onAppear {
@@ -1002,10 +1103,280 @@ struct GiftFlyingView: View {
                 opacity = 1
             }
         }
+        // 连击累加时弹一下 —— "数字在涨"这件事要有反馈
+        .onChange(of: animation.count) { _ in
+            withAnimation(.spring(response: 0.2, dampingFraction: 0.42)) { pop = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
+                withAnimation(.easeOut(duration: 0.2)) { pop = false }
+            }
+        }
         .transition(.asymmetric(
             insertion: .opacity,
-            removal: .move(edge: .leading).combined(with: .opacity)
+            removal: .move(edge: .trailing).combined(with: .opacity)
         ))
+    }
+}
+
+// MARK: - 大礼物全屏特效
+
+/// 大礼物（单价 ≥ 10000 金币）：暖色光晕铺满 + 光环扩散 + 礼物旋转放大 + 连击大字。
+struct GiftBurstView: View {
+    let animation: AppState.GiftAnimation
+
+    @State private var fly = false
+    @State private var ring = false
+    @State private var fade = false
+
+    var body: some View {
+        ZStack {
+            // 暖色光晕
+            RadialGradient(colors: [VRTheme.gold.opacity(0.50), VRTheme.pink.opacity(0.24), .clear],
+                           center: .center, startRadius: 8, endRadius: ring ? 340 : 70)
+                .opacity(fade ? 0 : 1)
+                .ignoresSafeArea()
+
+            // 扩散光环：一次扩散 + 淡出
+            Circle()
+                .strokeBorder(VRTheme.gold.opacity(0.6), lineWidth: 3)
+                .frame(width: ring ? 520 : 70, height: ring ? 520 : 70)
+                .opacity(ring ? 0 : 0.9)
+
+            VStack(spacing: 12) {
+                Text(animation.emoji)
+                    .font(.system(size: 96))
+                    .scaleEffect(fly ? 1 : 0.45)
+                    .rotationEffect(.degrees(fly ? 0 : -22))
+                    .offset(y: fly ? 0 : 130)
+                    .shadow(color: VRTheme.gold.opacity(0.65), radius: 26)
+
+                Text("\(animation.fromName) 送出 \(animation.giftName)")
+                    .font(.system(size: 15, weight: .heavy))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(
+                        Capsule().fill(LinearGradient(colors: [VRTheme.pink, VRTheme.gold],
+                                                      startPoint: .leading, endPoint: .trailing))
+                    )
+                    .shadow(color: .black.opacity(0.18), radius: 8, y: 3)
+                    .scaleEffect(fly ? 1 : 0.7)
+                    .opacity(fly ? 1 : 0)
+
+                if animation.count > 1 {
+                    Text("×\(animation.count)")
+                        .font(.system(size: 40, weight: .black))
+                        .foregroundColor(VRTheme.gold)
+                        .shadow(color: .black.opacity(0.28), radius: 8, y: 3)
+                        .scaleEffect(fly ? 1 : 0.3)
+                        .opacity(fly ? 1 : 0)
+                }
+            }
+            .opacity(fade ? 0 : 1)
+        }
+        .onAppear {
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.7)) { fly = true }
+            withAnimation(.easeOut(duration: 0.9)) { ring = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.8) {
+                withAnimation(.easeIn(duration: 0.7)) { fade = true }
+            }
+        }
+    }
+}
+
+// MARK: - VIP 发言飘屏
+
+/// VIP 在公屏说话时飘的金色横幅。普通用户不飘 —— 否则公屏一热闹就满屏都是。
+struct VipChatMarqueeView: View {
+    let marquee: AppState.ChatMarquee
+
+    @State private var offsetX: CGFloat = 420
+    @State private var opacity: Double = 0
+
+    private var user: VRUser {
+        VRUser(id: marquee.id, name: marquee.name, avatar: marquee.avatar,
+               gender: .secret, bio: "", coins: 0, charm: 0, vip: true, vipLevel: marquee.vipLevel)
+    }
+
+    var body: some View {
+        HStack(spacing: 9) {
+            VRAvatarFull(user: user, size: 30, vipLevel: marquee.vipLevel)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 5) {
+                    Text("VIP\(marquee.vipLevel)")
+                        .font(.system(size: 9, weight: .heavy))
+                        .foregroundColor(Color(hex: "5A3600"))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1.5)
+                        .background(Capsule().fill(VRTheme.goldGradient))
+                    Text(marquee.name)
+                        .font(.system(size: 11.5, weight: .bold))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                }
+                Text(marquee.text)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.white)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(
+            RoundedRectangle(cornerRadius: 15, style: .continuous)
+                .fill(
+                    LinearGradient(colors: [Color(hex: "9A6A00").opacity(0.94),
+                                            Color(hex: "FFB53C").opacity(0.94)],
+                                   startPoint: .leading, endPoint: .trailing)
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 15, style: .continuous)
+                .strokeBorder(Color(hex: "FFE9A8"), lineWidth: 1.2)
+        )
+        .shadow(color: VRTheme.gold.opacity(0.5), radius: 12, y: 4)
+        .offset(x: offsetX)
+        .opacity(opacity)
+        .onAppear {
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.78)) {
+                offsetX = 0
+                opacity = 1
+            }
+        }
+        .transition(.asymmetric(
+            insertion: .identity,
+            removal: .move(edge: .trailing).combined(with: .opacity)
+        ))
+    }
+}
+
+// MARK: - 悬浮音乐条（独立订阅播放进度）
+
+/// 悬浮音乐条的内容。
+///
+/// 它是**唯一**订阅 `MusicPlayer` 的视图。播放进度每 0.4 秒推一次
+/// （`addPeriodicTimeObserver(0.4)`）；如果让 RoomView 自己 `@ObservedObject` 它，
+/// 整个房间页 —— 9 个麦位、公屏、底部工具栏 —— 每秒都要跟着重算两次 body。
+/// 收进这个子视图之后，进度刷新只会重算这一根条子。
+struct MusicBarContent: View {
+
+    let song: VRSong
+    let playing: Bool
+    let modeIcon: String
+    let expanded: Bool
+    let width: CGFloat
+
+    let onTogglePlay: () -> Void
+    let onOpenList: () -> Void
+    let onCycleMode: () -> Void
+    let onCollapse: () -> Void
+    let onExpand: () -> Void
+
+    @ObservedObject private var player = MusicPlayer.shared
+
+    var body: some View {
+        Group {
+            if expanded { expandedBar } else { collapsedBar }
+        }
+    }
+
+    /// 展开形态：播放/暂停 · 歌名+进度+倒计时 · 播放模式 · 收起
+    private var expandedBar: some View {
+        HStack(spacing: 8) {
+            Button(action: onTogglePlay) {
+                Text(playing ? "⏸" : "▶️")
+                    .font(.system(size: 15))
+                    .frame(width: 30, height: 30)
+            }
+            .buttonStyle(.plain)
+
+            // 点这里 → 打开完整歌单（"显示全部"）
+            Button(action: onOpenList) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(song.title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(VRTheme.text)
+                        .lineLimit(1)
+
+                    HStack(spacing: 6) {
+                        GeometryReader { g in
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(Color(hex: "27436B").opacity(0.16))
+                                Capsule()
+                                    .fill(VRTheme.brandGradient)
+                                    .frame(width: max(1.5, g.size.width * player.progressFraction))
+                            }
+                        }
+                        .frame(height: 3)
+
+                        Text("\(player.positionText)/\(player.durationText)")
+                            .font(.system(size: 9, weight: .medium, design: .monospaced))
+                            .foregroundColor(VRTheme.textMute)
+                            .fixedSize()
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            // 播放模式
+            Button(action: onCycleMode) {
+                Text(modeIcon)
+                    .font(.system(size: 14))
+                    .frame(width: 26, height: 30)
+            }
+            .buttonStyle(.plain)
+
+            // 收起成一个圆图标
+            Button(action: onCollapse) {
+                Text("⌄")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundColor(VRTheme.textMute)
+                    .frame(width: 24, height: 30)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .frame(width: width)
+        .musicBarChrome(corner: 15)
+    }
+
+    /// 折叠形态：一颗**透明的音符图标**（无底板，只靠图标本身 + 白色外发光保证可读），点一下展开
+    ///
+    /// 为什么不用白色圆形底板：折叠态本来就是个"最小占位"，画一块白底等于在房间背景上
+    /// 贴了一张不透明的圆片，既挡背景又和展开态的玻璃条视觉不统一。
+    /// 为什么不用白色图标：房间背景是明亮色系（天空蓝 / 樱花粉），白图标会糊进背景里。
+    /// 所以用品牌蓝画图标，再叠两层白色外发光当作描边，深浅背景都能看清。
+    private var collapsedBar: some View {
+        ZStack {
+            // 环形进度：折叠时唯一能看到播放位置的地方。
+            // 只在真正播放时出现，且细到不会把图标"框"成一个按钮。
+            if playing {
+                Circle()
+                    .stroke(VRTheme.brand.opacity(0.16), lineWidth: 1.8)
+                Circle()
+                    .trim(from: 0, to: max(0.001, min(1, player.progressFraction)))
+                    .stroke(VRTheme.brand, style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                    .shadow(color: .white.opacity(0.9), radius: 2)
+            }
+
+            Image(systemName: "music.note")
+                .font(.system(size: 21, weight: .bold))
+                .foregroundColor(VRTheme.brand)
+                // 暂停时压暗一点，一眼区分"在放"和"没放"，但不换图标形状
+                .opacity(playing ? 1 : 0.5)
+                // 白色外发光（画两层）＝ 给图标描个白边，亮背景上也不会糊掉
+                .shadow(color: .white.opacity(0.95), radius: 2)
+                .shadow(color: .white.opacity(0.75), radius: 5)
+        }
+        .frame(width: width, height: width)
+        .contentShape(Circle())
+        .onTapGesture { onExpand() }
     }
 }
 

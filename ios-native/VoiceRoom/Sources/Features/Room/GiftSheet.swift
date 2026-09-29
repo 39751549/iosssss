@@ -116,7 +116,10 @@ struct GiftSheet: View {
                             targetClientId = m.clientId
                         } label: {
                             VStack(spacing: 5) {
-                                VRAvatarFull(user: m.user, size: 42)
+                                VRAvatarFull(user: m.user, size: 42,
+                                             isMine: m.clientId == app.clientId,
+                                             vipLevel: m.user.vip ? m.user.vipLevel : 0,
+                                             showNeutralRing: true)
                                     .overlay(
                                         Circle().strokeBorder(
                                             targetClientId == m.clientId ? VRTheme.pink : .clear,
@@ -244,7 +247,8 @@ struct GiftSheet: View {
 
     private func setup() {
         if selectedGiftId == nil { selectedGiftId = gifts.first?.id }
-        if let presetTarget {
+        // presetTarget 为空 = 没指定收礼人 → 保持「全房间」（targetClientId 本身就是 nil）
+        if let presetTarget, !presetTarget.isEmpty {
             targetClientId = presetTarget
         }
     }
@@ -255,11 +259,13 @@ struct GiftSheet: View {
             app.showToast("金币不足", kind: .error)
             return
         }
-        let target = targetClientId ?? state.members.first?.clientId ?? ""
-        guard !target.isEmpty else {
-            app.showToast("房间里还没有人", kind: .error)
-            return
-        }
+        // ⚠️ 这里**不能**再写 `targetClientId ?? state.members.first?.clientId`。
+        //
+        // 「全房间」在界面上就是"没选具体某个人"（targetClientId == nil）。以前那行兜底
+        // 会把"全房间"悄悄替换成"房间里的第一个人" —— 用户点的是全房、金币照扣，
+        // 结果只有一个人涨魅力值，其他人什么都没收到。
+        // 现在直接把空串透传给服务端，由服务端理解成"房间里除自己之外每个人各收一份"。
+        let target = targetClientId ?? ""
         app.sendGift(giftId: g.id, count: count, toClientId: target)
         app.showToast("已送出 \(g.emoji) \(g.name) ×\(count)", kind: .success)
         dismiss()

@@ -4,6 +4,8 @@ import SwiftUI
 struct MemberSheet: View {
 
     let state: VRRoomState
+    /// 说话状态单独订阅（高频变化，不挂在 AppState 上）
+    @ObservedObject var activity: VoiceActivity
 
     @EnvironmentObject var app: AppState
     @Environment(\.dismiss) private var dismiss
@@ -90,13 +92,16 @@ struct MemberSheet: View {
 
     private func memberRow(_ m: VRMember) -> some View {
         let isHost = m.clientId == state.hostClientId
-        let isSpeaking = app.speakingIds.contains(m.clientId)
+        let isSpeaking = activity.speakingIds.contains(m.clientId)
 
         return HStack(spacing: 11) {
-            VRAvatarFull(user: m.user, size: 44)
-                .overlay(
-                    Circle().strokeBorder(isSpeaking ? VRTheme.green : .clear, lineWidth: 2)
-                )
+            // 头像框（房主金环 / VIP 分色环 / 说话绿环）由头像组件统一画，
+            // 所以这里不再自己叠一圈 strokeBorder —— 那样会出现两圈环压在一起
+            VRAvatarFull(user: m.user, size: 44,
+                         isHost: isHost,
+                         isMine: m.clientId == app.clientId,
+                         speaking: isSpeaking,
+                         vipLevel: m.user.vip ? m.user.vipLevel : 0)
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 5) {
@@ -170,11 +175,11 @@ private struct VRCardDetentModifier: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 16.0, *) {
             content
-                // 小名片用一个**固定高度**而不是 .medium：
+                // 小名片用**固定高度**而不是 .medium：
                 // .medium 是"半屏"，在 iPhone SE 这种小屏上只有 ~333pt，
-                // 而封面 + 两个大圆按钮至少要 350pt，会把按钮裁掉一截。
-                // 固定 378 能保证两个圆按钮完整露出，也不用用户滚一下才看得到。
-                .presentationDetents([.height(378), .large], selection: detent)
+                // 而封面 + 两个大圆按钮至少要 373pt，会把按钮裁掉一截。
+                // 高度按屏高自适应（见 compactHeight），保证两个圆按钮完整露出、不用户滚。
+                .presentationDetents([.height(Self.compactHeight), .large], selection: detent)
                 // 不显示系统把手：名片是自定义视觉（封面铺到顶），
                 // 一条灰色横杠压在封面上很突兀；收起/展开交给右上的箭头和 ✕。
                 .presentationDragIndicator(.hidden)
@@ -183,13 +188,24 @@ private struct VRCardDetentModifier: ViewModifier {
         }
     }
 
+    /// 小名片高度：兜底 373pt（内容自然高度）保证按钮不被裁，
+    /// 大屏上再放宽一点，看着不局促。
+    static var compactHeight: CGFloat {
+        min(420, max(376, UIScreen.main.bounds.height * 0.46))
+    }
+
     /// `PresentationDetent` 本身是 iOS 16+ 的类型，
     /// 所以**用到它的属性也要标 `@available`** —— 只在 body 里写 `if #available` 不够：
     /// 编译器是逐个声明检查可用性的，一个 iOS 16 类型出现在未标注的属性签名里就直接报错。
+    ///
+    /// getter 必须返回「**真的在 detents 集合里**的那个档位」：
+    /// 这里以前返回的是 `.medium`，而集合里只有 `.height(378)` 和 `.large` ——
+    /// selection 指向一个不存在的档位时，系统会按"就近吸附"猜一个，
+    /// 表现就是高度偶尔自己跳（小屏上尤其明显）。
     @available(iOS 16.0, *)
     private var detent: Binding<PresentationDetent> {
         Binding(
-            get: { mode == .full ? PresentationDetent.large : PresentationDetent.medium },
+            get: { mode == .full ? PresentationDetent.large : PresentationDetent.height(Self.compactHeight) },
             set: { mode = ($0 == PresentationDetent.large) ? .full : .compact }
         )
     }
@@ -203,11 +219,16 @@ struct UserCardSheet: View {
     @EnvironmentObject var app: AppState
     @Environment(\.dismiss) private var dismiss
     @State private var showGift = false
+    /// 自己看自己的名片时，「编辑名片」直接在这个弹层里打开编辑面板
+    @State private var showEdit = false
     @State private var mode: VRCardMode = .compact
 
     private var user: VRUser { member.user }
     private var isMe: Bool { member.clientId == app.clientId }
     private var isHost: Bool { member.clientId == state.hostClientId }
+    /// 送给谁：别人的名片 → 预选这个人；自己的名片 → 不预选（默认"全房间"，
+    /// 因为"给自己送礼"没有意义，用户点进来通常是想送房里其他人）
+    private var giftPreset: String? { isMe ? nil : member.clientId }
 
     /// 在房时长（分钟）。`joinedAt` 是服务端毫秒时间戳；
     /// 0 表示这条成员记录是本地临时拼出来的（比如从公屏点自己），此时不显示这一项。
@@ -240,7 +261,10 @@ struct UserCardSheet: View {
         }
         .modifier(VRCardDetentModifier(mode: $mode))
         .sheet(isPresented: $showGift) {
-            GiftSheet(state: state, presetTarget: member.clientId).environmentObject(app)
+            GiftSheet(state: state, presetTarget: giftPreset).environmentObject(app)
+        }
+        .sheet(isPresented: $showEdit) {
+            ProfileEditSheet().environmentObject(app)
         }
     }
 
@@ -255,8 +279,11 @@ struct UserCardSheet: View {
                            center: .init(x: 0.3, y: 0.2), startRadius: 0, endRadius: 230)
 
             // 大头像：封面主体（和图片里那张人物立绘位置一致）
-            VRAvatarFull(user: user, size: 104)
-                .overlay(Circle().strokeBorder(Color.white.opacity(0.95), lineWidth: 3))
+            VRAvatarFull(user: user, size: 104,
+                         isHost: isHost,
+                         isMine: isMe,
+                         vipLevel: user.vip ? user.vipLevel : 0,
+                         showNeutralRing: true)
                 .shadow(color: .black.opacity(0.26), radius: 16, y: 8)
 
             VStack {
@@ -287,13 +314,13 @@ struct UserCardSheet: View {
     }
 
     /// 右上角勋章排（对应图片里名字上方那一排小圆章）
+    ///
+    /// 房主那枚 `house.fill` 删掉了：房主的皇冠和金环现在由头像框统一画，
+    /// 再挂一枚"房子"章就是同一个身份说两遍，也让头像框的视觉没有落点。
     private var medals: some View {
         HStack(spacing: 6) {
             if user.vip {
                 medal("crown.fill", [VRTheme.gold, Color(hex: "FF8A3C")])
-            }
-            if isHost {
-                medal("house.fill", [Color(hex: "6BD5FF"), Color(hex: "3B8CFF")])
             }
             if member.seat >= 0 {
                 medal("mic.fill", [VRTheme.green, Color(hex: "22A97C")])
@@ -332,8 +359,11 @@ struct UserCardSheet: View {
 
     private var identityRow: some View {
         HStack(spacing: 12) {
-            VRAvatarFull(user: user, size: 54)
-                .overlay(Circle().strokeBorder(Color.white, lineWidth: 2.5))
+            VRAvatarFull(user: user, size: 54,
+                         isHost: isHost,
+                         isMine: isMe,
+                         vipLevel: user.vip ? user.vipLevel : 0,
+                         showNeutralRing: true)
                 .shadow(color: .black.opacity(0.14), radius: 7, y: 3)
 
             VStack(alignment: .leading, spacing: 5) {
@@ -358,18 +388,38 @@ struct UserCardSheet: View {
 
             Spacer(minLength: 4)
 
-            Button { toggleFull() } label: {
-                HStack(spacing: 3) {
-                    if mode == .compact {
-                        Text("主页")
+            if isMe {
+                // 自己的名片：编辑入口放在标题行右侧。
+                //
+                // 原来这里是「主页 ›」，而下面两个大圆按钮右边那个被换成了「编辑我的名片」——
+                // 结果看自己的名片时完全没有「送礼物」这个入口，看着就像送礼功能没了。
+                // 现在两个大圆按钮固定是「查看完整主页 / 送礼物」，编辑挪到这个小胶囊上。
+                Button { showEdit = true } label: {
+                    HStack(spacing: 3) {
+                        Text("✏️").font(.system(size: 11))
+                        Text("编辑")
                             .font(.system(size: 11, weight: .semibold))
                     }
-                    Image(systemName: mode == .full ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(VRTheme.brand)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(VRTheme.brand.opacity(0.13)))
                 }
-                .foregroundColor(VRTheme.textMute)
+                .buttonStyle(.plain)
+            } else {
+                Button { toggleFull() } label: {
+                    HStack(spacing: 3) {
+                        if mode == .compact {
+                            Text("主页")
+                                .font(.system(size: 11, weight: .semibold))
+                        }
+                        Image(systemName: mode == .full ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 12, weight: .bold))
+                    }
+                    .foregroundColor(VRTheme.textMute)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
         }
         .padding(.horizontal, 18)
         .padding(.top, 18)
@@ -398,7 +448,10 @@ struct UserCardSheet: View {
             .foregroundColor(VRTheme.textDim)
     }
 
-    /// 两个大圆按钮：左＝查看完整主页，右＝送礼物（自己则是编辑名片）
+    /// 两个大圆按钮：左＝查看完整主页，右＝送礼物。
+    ///
+    /// 这两个**恒定不变**（对齐参考图）：以前右边那个在"看自己"时会变成「编辑我的名片」，
+    /// 于是从自己的麦位/头像点进来就再也找不到送礼入口。编辑名片改挂标题行右侧了。
     private var actionRow: some View {
         HStack(spacing: 44) {
             roundAction("查看完整主页", "person.crop.circle.fill",
@@ -406,19 +459,9 @@ struct UserCardSheet: View {
                 withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) { mode = .full }
             }
 
-            if isMe {
-                roundAction("编辑我的名片", "square.and.pencil",
-                            [Color(hex: "C7A6FF"), Color(hex: "8E5BFF")]) {
-                    dismiss()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                        app.showToast("请在大厅「设置 → 编辑名片」里修改")
-                    }
-                }
-            } else {
-                roundAction("送礼物", "gift.fill",
-                            [Color(hex: "FFA6C9"), Color(hex: "FF5C9E")]) {
-                    showGift = true
-                }
+            roundAction("送礼物", "gift.fill",
+                        [Color(hex: "FFA6C9"), Color(hex: "FF5C9E")]) {
+                showGift = true
             }
         }
         .padding(.top, 18)

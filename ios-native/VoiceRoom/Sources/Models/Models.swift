@@ -159,6 +159,9 @@ struct VRSong: Codable, Identifiable, Equatable {
     var artist: String?
     /// 曲库标识：本地曲库为 libId；在线曲库为 gd|源|歌id
     var libraryId: String?
+    /// 点歌人的 userId —— 用来把「正在播放的这首歌是谁点的」那个麦位点亮。
+    /// 老数据/老服务端没有这个字段，所以是可选的。
+    var byUserId: String?
 }
 
 // MARK: - 房间完整状态快照

@@ -51,9 +51,28 @@ struct VRAvatar: View {
 }
 
 /// 完整头像视图：支持 dataURL、服务端 URL（/avatar/xxx）、GIF 动图与透明 PNG
+///
+/// 头像框（房主 / VIP / 说话 / 我自己）也画在这里，而不是让每个调用点自己叠 overlay。
+/// 原因：调用点自己叠的话，麦位上会出现「白边 + 绿圈 + 金圈」三层环同时压在同一张头像上，
+/// 而且每个地方各写一套、颜色还会走样。统一在组件里按优先级**只画一圈**，各处传参即可。
+///
+/// 新增参数都带默认值，老调用点不传就是原样，不会因为这次改动而变形。
 struct VRAvatarFull: View {
     let user: VRUser?
     var size: CGFloat = 40
+
+    // MARK: 头像框参数
+
+    /// 房主 → 金色环 + 顶部皇冠
+    var isHost: Bool = false
+    /// 我自己 → 品牌蓝环
+    var isMine: Bool = false
+    /// 正在说话 → 绿色环
+    var speaking: Bool = false
+    /// VIP 等级（0 表示非 VIP）→ 按等级分色环 + 右下角等级小徽章
+    var vipLevel: Int = 0
+    /// 以上都不适用时，要不要画一圈默认的白色描边（麦位在背景图上需要它来分离边缘；列表里不需要）
+    var showNeutralRing: Bool = false
 
     @State private var image: UIImage?
     /// 当前这次加载对应的头像 URL；回调到达时校验，丢弃过期结果
@@ -75,6 +94,9 @@ struct VRAvatarFull: View {
         }
         .frame(width: size, height: size)
         .clipShape(Circle())
+        .overlay { ringView }
+        .overlay(alignment: .bottomTrailing) { vipLevelBadge }
+        .overlay(alignment: .top) { crownBadge }
         .onAppear(perform: loadIfNeeded)
         .onChange(of: user?.avatar) { _ in
             image = nil
@@ -88,6 +110,76 @@ struct VRAvatarFull: View {
             image = nil
             loadingKey = nil
             loadIfNeeded()
+        }
+    }
+
+    // MARK: - 头像框
+
+    /// 环的配色。优先级：正在说话 > 房主 > VIP > 我自己 > 默认白边。
+    /// 只取一个，不叠加 —— 叠起来一圈套一圈，小头像上会糊成一坨。
+    private var ringColors: [Color]? {
+        if speaking { return [VRTheme.green, Color(hex: "22A97C")] }
+        if isHost { return [Color(hex: "FFE08A"), Color(hex: "FF9F1C")] }
+        if vipLevel > 0 { return Self.vipRingColors(vipLevel) }
+        if isMine { return [VRTheme.brand, Color(hex: "6FC4FF")] }
+        if showNeutralRing { return [Color.white.opacity(0.62), Color.white.opacity(0.42)] }
+        return nil
+    }
+
+    /// VIP 分档配色，和服务端的 VIP 阶梯对齐：
+    /// 1-3 银蓝 / 4-6 紫 / 7-9 金 / 10+ 三色（粉金蓝）
+    private static func vipRingColors(_ level: Int) -> [Color] {
+        switch level {
+        case ..<4:  return [Color(hex: "CFE6FF"), Color(hex: "6FA8FF")]
+        case 4...6: return [Color(hex: "D9B3FF"), Color(hex: "8E5BFF")]
+        case 7...9: return [Color(hex: "FFE08A"), Color(hex: "FF9F1C")]
+        default:    return [Color(hex: "FF7FAE"), Color(hex: "FFD86B"), Color(hex: "7ED0FF")]
+        }
+    }
+
+    @ViewBuilder
+    private var ringView: some View {
+        if let colors = ringColors {
+            Circle()
+                .strokeBorder(
+                    LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing),
+                    lineWidth: max(1.6, size * 0.045)
+                )
+                // VIP / 房主的环加一点发光，看起来"bling bling"
+                .shadow(color: (colors.last ?? .clear).opacity(vipLevel > 0 || isHost ? 0.55 : 0),
+                        radius: 4)
+        }
+    }
+
+    /// VIP 等级徽章的直径（太小的头像上不画徽章，否则糊成一团）
+    private var badgeDiameter: CGFloat { max(15, size * 0.36) }
+
+    /// 右下角 VIP 等级小徽章
+    @ViewBuilder
+    private var vipLevelBadge: some View {
+        if vipLevel > 0 && size >= 38 && !speaking {
+            Text("\(vipLevel)")
+                .font(.system(size: badgeDiameter * 0.62, weight: .heavy))
+                .foregroundColor(.white)
+                .frame(width: badgeDiameter, height: badgeDiameter)
+                .background(
+                    Circle().fill(LinearGradient(colors: Self.vipRingColors(vipLevel),
+                                                 startPoint: .top, endPoint: .bottom))
+                )
+                .overlay(Circle().strokeBorder(.white, lineWidth: 1.4))
+                .shadow(color: .black.opacity(0.22), radius: 3, y: 1)
+                .offset(x: 1, y: 1)
+        }
+    }
+
+    /// 房主皇冠（压在头像顶部）
+    @ViewBuilder
+    private var crownBadge: some View {
+        if isHost && size >= 38 {
+            Text("👑")
+                .font(.system(size: max(11, size * 0.26)))
+                .offset(y: -max(6, size * 0.14))
+                .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
         }
     }
 
@@ -503,6 +595,71 @@ struct VRSegmentedControl<T: Hashable>: View {
     }
 }
 
+
+// MARK: - VIP 房间的金色闪光氛围
+
+/// 房主是 VIP 时铺在房间背景上的一层氛围：暖金色流光 + 几颗缓慢闪烁的星点。
+///
+/// 性能上刻意做成「固定几个视图 + 持续动画」：
+/// 星点数量固定（7 个），位置用下标算伪随机（不放随机数，重绘时不会跳位），
+/// 闪烁全部交给 Core Animation 的 repeatForever 驱动 —— 不需要每帧重算 SwiftUI 的 body，
+/// 所以开着它也不会持续占 CPU。`.allowsHitTesting(false)` 保证它不吃任何点击。
+struct GoldShimmerLayer: View {
+
+    /// 星点数量
+    var stars: Int = 7
+    /// 叠加在房间背景上的强度（0~1）
+    var intensity: Double = 1
+
+    @State private var on = false
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack {
+                LinearGradient(
+                    colors: [
+                        Color(hex: "FFD86B").opacity((on ? 0.17 : 0.07) * intensity),
+                        .clear,
+                        Color(hex: "FFA53C").opacity((on ? 0.14 : 0.05) * intensity)
+                    ],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                )
+
+                ForEach(0..<stars, id: \.self) { i in
+                    starView(i, in: geo.size)
+                }
+            }
+            .onAppear { on = true }
+        }
+        .allowsHitTesting(false)
+    }
+
+    private func starView(_ i: Int, in size: CGSize) -> some View {
+        let p = Self.position(i, in: size)
+        return Circle()
+            .fill(Color(hex: "FFF6CF"))
+            .frame(width: p.r, height: p.r)
+            .shadow(color: Color(hex: "FFD86B").opacity(0.95), radius: 6)
+            .position(x: p.x, y: p.y)
+            .opacity((on ? 0.95 : 0.12) * intensity)
+            .scaleEffect(on ? 1.28 : 0.62)
+            .animation(
+                .easeInOut(duration: 1.5 + Double(i % 3) * 0.55)
+                    .repeatForever(autoreverses: true)
+                    .delay(Double(i) * 0.26),
+                value: on
+            )
+    }
+
+    /// 固定分布（下标越界自动回绕），避免引入随机数导致每次重绘星点乱跳
+    private static func position(_ i: Int, in size: CGSize) -> (x: CGFloat, y: CGFloat, r: CGFloat) {
+        let fx: [CGFloat] = [0.14, 0.83, 0.33, 0.69, 0.21, 0.91, 0.52]
+        let fy: [CGFloat] = [0.11, 0.19, 0.35, 0.47, 0.65, 0.76, 0.88]
+        let fr: [CGFloat] = [3.6, 2.6, 4.2, 3.0, 2.4, 3.6, 2.8]
+        let k = i % fx.count
+        return (size.width * fx[k], size.height * fy[k], fr[k])
+    }
+}
 
 // MARK: - iOS 15/16 兼容助手
 //
