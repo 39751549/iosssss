@@ -47,10 +47,14 @@
 	</dict>
 
 	<!-- ============ 后台音频（切到后台/锁屏继续听歌） ============ -->
+	<!--
+	  只用 audio。之前还声明了 voip，但工程里没有任何 PushKit/CallKit 代码：
+	  声明多余的后台能力会让系统把 App 当成 VoIP 应用（允许长期持有音频会话），
+	  也是 App Store 常见的拒审原因。
+	-->
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
-		<string>voip</string>
 	</array>
 
 	<!-- ============ 界面 ============ -->

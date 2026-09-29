@@ -39,8 +39,15 @@ final class VoiceEngine: NSObject {
 
     override init() {
         super.init()
-        setupFactory()
-        configureAudioSession()
+        // ⚠️ 这里**绝对不能**碰 AVAudioSession，也先不建 WebRTC 工厂。
+        //
+        // AppState 是 @StateObject，一启动就 new 出 VoiceEngine。以前 init 里直接
+        // setCategory(.playAndRecord) + setActive(true)，于是用户只是**打开 App**
+        // （还在登录页/大厅、根本没进房）系统就亮起「正在使用麦克风」的提示，
+        // 同时把别的 App 的音频顶掉（.playAndRecord 不带 mixWithOthers 会独占）。
+        //
+        // 正确做法：音频会话推迟到真正需要出声/收声时再激活 —— 见 enterListenMode /
+        // enterTalkMode；离开房间用 leaveAudio() 释放，麦克风提示随之消失。
     }
 
     // MARK: - 初始化
@@ -53,17 +60,50 @@ final class VoiceEngine: NSObject {
         factory = RTCPeerConnectionFactory(encoderFactory: encoder, decoderFactory: decoder)
     }
 
-    /// 配置音频会话：允许录音 + 播放，支持蓝牙与外放
-    /// iOS 上这是必须的一步，否则麦克风采集不到数据
-    private func configureAudioSession() {
+    // MARK: - 音频会话（按需激活，分「只听」和「说话」两档）
+
+    private(set) var audioMode: AudioMode = .idle
+
+    enum AudioMode { case idle, listen, talk }
+
+    /// 进房但没开麦：只占播放通道，**不碰麦克风**（不会亮麦克风提示，也不会顶掉其他 App 音频）
+    func enterListenMode() {
+        // 注意守卫写的是 != .listen（而不是 != .talk）：
+        // 闭麦时要能从 .talk **降档**回 .listen，写 != .talk 会把降档这条路堵死。
+        guard audioMode != .listen else { return }
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try session.setActive(true)
+            audioMode = .listen
+        } catch {
+            print("[Voice] 播放模式音频会话失败: \(error.localizedDescription)")
+        }
+    }
+
+    /// 开麦：切到双向语音（这一步开始系统会显示正在使用麦克风 —— 属于预期）
+    func enterTalkMode() {
         let session = AVAudioSession.sharedInstance()
         do {
             try session.setCategory(.playAndRecord,
                                     mode: .voiceChat,
                                     options: [.defaultToSpeaker, .allowBluetooth])
-            try session.setActive(true, options: [])
+            try session.setActive(true)
+            audioMode = .talk
+            applySpeakerPreference()
         } catch {
-            print("[Voice] AVAudioSession 配置失败: \(error.localizedDescription)")
+            print("[Voice] 语音模式音频会话失败: \(error.localizedDescription)")
+        }
+    }
+
+    /// 离开房间 / 退到大厅：释放音频会话，麦克风与扬声器占用一并解除
+    func leaveAudio() {
+        audioMode = .idle
+        do {
+            try AVAudioSession.sharedInstance().setActive(false,
+                                                          options: [.notifyOthersOnDeactivation])
+        } catch {
+            print("[Voice] 释放音频会话失败: \(error.localizedDescription)")
         }
     }
 
@@ -75,7 +115,7 @@ final class VoiceEngine: NSObject {
             AVAudioApplication.requestRecordPermission { granted in
                 DispatchQueue.main.async {
                     if granted {
-                        self.configureAudioSession()
+                        self.enterTalkMode()
                         self.startLocalAudio()
                     }
                     completion(granted)
@@ -85,7 +125,7 @@ final class VoiceEngine: NSObject {
             AVAudioSession.sharedInstance().requestRecordPermission { granted in
                 DispatchQueue.main.async {
                     if granted {
-                        self.configureAudioSession()
+                        self.enterTalkMode()
                         self.startLocalAudio()
                     }
                     completion(granted)
@@ -95,6 +135,7 @@ final class VoiceEngine: NSObject {
     }
 
     private func startLocalAudio() {
+        setupFactory()
         guard localStream == nil, let factory else { return }
 
         // AEC/NS/AGC 由 WebRTC 音频处理默认开启，无需显式约束键
@@ -121,11 +162,27 @@ final class VoiceEngine: NSObject {
     func setMicEnabled(_ enabled: Bool) {
         isMicOn = enabled
         audioTrack?.isEnabled = enabled
+        // 闭麦后降到「只听」档：释放录音通道，麦克风提示熄灭
+        if enabled {
+            enterTalkMode()
+        } else if audioMode == .talk {
+            enterListenMode()
+        }
     }
 
+    /// 记住扬声器开关（.playback 档下音频本来就只走外放，
+    /// 只有 .playAndRecord 档才需要用 overrideOutputAudioPort 在听筒/外放之间切）
+    private var speakerPreferred = true
+
     func setSpeakerEnabled(_ enabled: Bool) {
+        speakerPreferred = enabled
+        applySpeakerPreference()
+    }
+
+    private func applySpeakerPreference() {
+        guard audioMode == .talk else { return }
         do {
-            try AVAudioSession.sharedInstance().overrideOutputAudioPort(enabled ? .speaker : .none)
+            try AVAudioSession.sharedInstance().overrideOutputAudioPort(speakerPreferred ? .speaker : .none)
         } catch {
             print("[Voice] 切换扬声器失败: \(error.localizedDescription)")
         }
@@ -134,6 +191,7 @@ final class VoiceEngine: NSObject {
     // MARK: - 建立 P2P 连接
 
     private func newPeerConnection(to remoteId: String) -> RTCPeerConnection? {
+        setupFactory()
         guard let factory else { return nil }
         if let existing = peers[remoteId] { return existing }
 
@@ -281,6 +339,8 @@ final class VoiceEngine: NSObject {
         speakingIds.removeAll()
         onSpeakingChanged?([])
         factory = nil
+        // 释放音频会话：离开房间后不再占用麦克风/扬声器
+        leaveAudio()
     }
 
     // MARK: - 说话检测

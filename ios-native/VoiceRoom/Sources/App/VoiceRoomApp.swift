@@ -83,7 +83,11 @@ struct RootView: View {
         .animation(.easeInOut(duration: 0.28), value: app.roomMinimized)
         .animation(.easeInOut(duration: 0.28), value: app.isLoggedIn)
         .onChange(of: scenePhase) { phase in
-            if phase == .active { app.appDidBecomeActive() }
+            switch phase {
+            case .active:     app.appDidBecomeActive()
+            case .background: app.appDidEnterBackground()
+            default:          break
+            }
         }
     }
 }

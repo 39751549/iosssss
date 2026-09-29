@@ -23,3 +23,6 @@ ios-native/.spm-cache/
 ios-native/*.jpg
 *.ipa
 data-test-local/
+
+# 本地免重装测试环境（临时数据，不进仓库）
+devtest/.data/

@@ -1,0 +1,306 @@
+/**
+ * 场景测试集 —— 跑在本地隔离服务器上。
+ *
+ * 用法:  node devtest/run.js           （自动起本地服务器 → 跑全部 → 关掉）
+ *        node devtest/scenarios.js     （对着已启动的服务器跑）
+ *
+ * 目标：把"改一行→打包→重装→手点→发现没修好"的循环，换成"改一行→3 秒出结果"。
+ */
+const http = require('http');
+const zlib = require('zlib');
+const crypto = require('crypto');
+const { IOSClient, wait } = require('./ios-client');
+
+const HOST = process.env.VR_HOST || '127.0.0.1:8126';
+
+let pass = 0, fail = 0;
+const failures = [];
+
+function check(name, ok, extra) {
+  if (ok) { pass++; console.log('  ✅ ' + name + (extra ? '   ' + extra : '')); }
+  else { fail++; failures.push(name); console.log('  ❌ ' + name + (extra ? '   ' + extra : '')); }
+}
+function section(t) { console.log('\n── ' + t + ' ──'); }
+const rnd = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+// ---------- HTTP 辅助 ----------
+
+function post(path, obj) {
+  return new Promise((res) => {
+    const body = JSON.stringify(obj);
+    const [host, port] = HOST.split(':');
+    const req = http.request({
+      host, port: Number(port), path, method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+    }, (r) => {
+      let d = ''; r.on('data', (c) => { d += c; });
+      r.on('end', () => res({ code: r.statusCode, body: d }));
+    });
+    req.on('error', (e) => res({ code: -1, body: 'ERR ' + e.message }));
+    req.write(body); req.end();
+  });
+}
+function get(path) {
+  return new Promise((res) => {
+    const [host, port] = HOST.split(':');
+    http.get({ host, port: Number(port), path }, (r) => {
+      let n = 0; r.on('data', (c) => { n += c.length; });
+      r.on('end', () => res({ code: r.statusCode, len: n, ct: r.headers['content-type'] }));
+    }).on('error', (e) => res({ code: -1, len: 0, ct: 'ERR ' + e.message }));
+  });
+}
+
+/** 造一张指定体积、不可压缩的真 PNG（模拟用户真实照片） */
+function makePng(targetBytes) {
+  const idat = zlib.deflateSync(crypto.randomBytes(targetBytes), { level: 0 });
+  const table = [...Array(256)].map((_, n) => {
+    let c = n; for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    return c >>> 0;
+  });
+  const crc = (b) => {
+    let c = 0xFFFFFFFF;
+    for (const x of b) c = table[(c ^ x) & 0xFF] ^ (c >>> 8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  };
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+    const t = Buffer.from(type);
+    const c = Buffer.alloc(4); c.writeUInt32BE(crc(Buffer.concat([t, data])));
+    return Buffer.concat([len, t, data, c]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(1, 0); ihdr.writeUInt32BE(1, 4); ihdr[8] = 8; ihdr[9] = 0;
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    chunk('IHDR', ihdr), chunk('IDAT', idat), chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+// ---------- 场景 ----------
+
+/** 1. 自动登录：建连后服务端要主动说话，客户端才能触发 silentAuth */
+async function s1_自动登录() {
+  section('自动登录（"只要不卸载就永远不掉线"的地基）');
+  const c = new IOSClient({ host: HOST, label: 'auto', deviceId: 'dev-' + rnd() });
+  const opened = await Promise.race([
+    c.connect().then(() => 'ok'),
+    wait(4000).then(() => 'timeout'),
+  ]);
+  check('建连成功', opened === 'ok');
+  check('服务端主动下发 hello（silentAuth 的触发条件）', c.sawType('hello'), '收到: ' + JSON.stringify(c.types()));
+
+  await c.signup('auto_' + rnd());
+  check('静默登录成功 auth:ok', c.loggedIn);
+  c.close();
+}
+
+/** 2. 切后台再回前台：同设备重连**不该**弹顶号 */
+async function s2_切后台回来不误报顶号() {
+  section('切后台 → 回前台（本次报的 bug）');
+  const dev = 'dev-fixed-' + rnd();
+  const c = new IOSClient({ host: HOST, label: 'bg', deviceId: dev });
+  await c.connect();
+  await c.signup('bgtest_' + rnd());
+  const roomId = await c.createRoom('切后台测试房');
+  await c.joinRoom(roomId);
+  check('进房成功', !!c.roomId, 'roomId=' + c.roomId);
+
+  c.background();
+  await wait(400);
+  await c.foreground();                       // 新版客户端：先拆旧连接再重连
+
+  check('回前台后重新登录成功', c.loggedIn);
+  check('回前台后自动回到原房间', c.roomId === roomId, 'roomId=' + c.roomId);
+  check('未收到 room:kicked（同设备重连静默替换）', !c.kicked,
+        '收到的帧: ' + JSON.stringify(c.types()));
+  c.close();
+}
+
+/**
+ * 3. 复现修复前的现象：客户端**不拆旧连接**就重连。
+ * 旧服务端会把这条旧 socket 当"异地登录"顶掉，而它的消息回调还挂着 → 用户自己看到顶号提示。
+ * 现在服务端按 deviceId 识别，同设备静默关闭，所以即使客户端不拆旧连接也不会误报。
+ */
+async function s3_旧客户端遗留连接也不误报() {
+  section('遗留旧连接（模拟修复前的客户端行为）');
+  const dev = 'dev-stale-' + rnd();
+  const c = new IOSClient({ host: HOST, label: 'stale', deviceId: dev });
+  await c.connect();
+  await c.signup('stale_' + rnd());
+  const roomId = await c.createRoom('遗留连接测试房');
+  await c.joinRoom(roomId);
+
+  c.background();
+  await wait(400);
+  await c.foreground({ keepOldSocket: true });  // 旧 socket 不拆，故意留隐患
+
+  check('新连接正常登录', c.loggedIn);
+  check('即使旧 socket 未拆除，也不弹顶号（服务端按 deviceId 静默替换）', !c.kicked,
+        '收到的帧: ' + JSON.stringify(c.types()));
+  c.close();
+}
+
+/** 4. 真的在另一台设备登录：必须顶号 */
+async function s4_异地登录仍然顶号() {
+  section('另一台设备登录（真顶号必须还能用）');
+  const uname = 'kicktest_' + rnd();
+  const devA = 'dev-a-' + rnd(), devB = 'dev-b-' + rnd();
+
+  const a = new IOSClient({ host: HOST, label: 'A', deviceId: devA });
+  await a.connect();
+  a.username = uname; a.password = 'pw123456';
+  await a.silentAuth();
+  check('设备 A 登录成功', a.loggedIn);
+
+  const b = new IOSClient({ host: HOST, label: 'B', deviceId: devB });
+  await b.connect();
+  b.username = uname; b.password = 'pw123456';
+  await b.silentAuth();
+  await wait(800);
+
+  check('设备 B 登录成功', b.loggedIn);
+  check('设备 A 收到 room:kicked（异地登录被顶下线）', a.kicked,
+        'A 收到的帧: ' + JSON.stringify(a.types()));
+  a.close(); b.close();
+}
+
+/** 5. 同设备重复登录（同一台机器连开两次）：静默替换，不弹顶号 */
+async function s5_同设备重复登录不误报() {
+  section('同一台设备重复登录');
+  const uname = 'sametwice_' + rnd();
+  const dev = 'dev-same-' + rnd();
+
+  const a = new IOSClient({ host: HOST, label: 'A1', deviceId: dev });
+  await a.connect();
+  a.username = uname; a.password = 'pw123456';
+  await a.silentAuth();
+
+  const b = new IOSClient({ host: HOST, label: 'A2', deviceId: dev });
+  await b.connect();
+  b.username = uname; b.password = 'pw123456';
+  await b.silentAuth();
+  await wait(800);
+
+  check('第二条连接登录成功', b.loggedIn);
+  check('第一条连接未被判为异地登录', !a.kicked, 'A1 收到的帧: ' + JSON.stringify(a.types()));
+  a.close(); b.close();
+}
+
+/** 6. 自定义背景：上传 → 房间快照更新 → 文件可下载 */
+async function s6_自定义背景全链路() {
+  section('自定义背景（上传 → 快照 → 可下载）');
+  const c = new IOSClient({ host: HOST, label: 'bg', deviceId: 'dev-bg-' + rnd() });
+  await c.connect();
+  await c.signup('bgflow_' + rnd());
+  const roomId = await c.createRoom('背景流程房');
+  await c.joinRoom(roomId);
+  check('房间初始背景为内置主题', c.roomState && c.roomState.room.background === 'aurora',
+        'background=' + JSON.stringify(c.roomState && c.roomState.room.background));
+
+  for (const kb of [400, 2000, 4500]) {
+    const png = makePng(kb * 1024);
+    const dataUrl = 'data:image/png;base64,' + png.toString('base64');
+    const bodyMB = JSON.stringify({ userId: c.userId, dataUrl }).length / 1024 / 1024;
+    const r = await post('/api/upload-bg', { userId: c.userId, dataUrl });
+    const okJson = (() => { try { return JSON.parse(r.body); } catch { return {}; } })();
+    check(`上传 ${kb}KB 图（请求体 ${bodyMB.toFixed(2)}MB）`, r.code === 200 && okJson.ok === true,
+          'HTTP ' + r.code + ' ' + r.body.slice(0, 70));
+    await wait(700);
+  }
+
+  const bg = c.roomState && c.roomState.room.background;
+  check('上传后房间快照的 background 变成 /bg/…', typeof bg === 'string' && bg.startsWith('/bg/'),
+        'background=' + JSON.stringify(bg));
+
+  if (typeof bg === 'string' && bg.startsWith('/bg/')) {
+    const f = await get(bg);
+    check('背景文件能下载', f.code === 200 && f.len > 0,
+          'HTTP ' + f.code + ' 大小 ' + f.len + ' ' + f.ct);
+  }
+
+  // 切回内置主题
+  c.send({ type: 'room:bg', roomId, background: 'hearts' });
+  await wait(700);
+  check('能切回内置主题', c.roomState && c.roomState.room.background === 'hearts',
+        'background=' + JSON.stringify(c.roomState && c.roomState.room.background));
+  c.close();
+}
+
+/** 7. 音乐：多人 ended 只推进一首 */
+async function s7_音乐同步() {
+  section('音乐同步');
+  const a = new IOSClient({ host: HOST, label: 'A', deviceId: 'dev-m1-' + rnd() });
+  await a.connect();
+  await a.signup('mus_a_' + rnd());
+  const roomId = await a.createRoom('点歌房');
+  await a.joinRoom(roomId);
+
+  // 本地服务器的曲库是空的，用外链歌曲造数据（不需要曲库里有这首歌）
+  for (const i of [1, 2, 3]) {
+    a.send({ type: 'music:add', userId: a.userId, title: '测试歌' + i,
+             artist: 'QA', url: 'https://example.com/qa' + i + '.mp3', by: 'A' });
+    await wait(350);
+  }
+  check('歌单加入 3 首', a.roomState && a.roomState.playlist.length === 3,
+        'len=' + (a.roomState && a.roomState.playlist.length));
+
+  const b = new IOSClient({ host: HOST, label: 'B', deviceId: 'dev-m2-' + rnd() });
+  await b.connect();
+  await b.signup('mus_b_' + rnd());
+  await b.joinRoom(roomId);
+  await wait(700);
+
+  const first = a.roomState.currentSong && a.roomState.currentSong.id;
+  a.musicControl('ended');
+  b.musicControl('ended');       // 两人几乎同时上报
+  await wait(1200);
+  const second = a.roomState.currentSong && a.roomState.currentSong.id;
+  const idx = a.roomState.playlist.findIndex((s) => s.id === second);
+  check('两人同时上报 ended 只推进 1 首（不跳歌）', idx === 1,
+        '当前在第 ' + (idx + 1) + ' 首，first=' + !!first);
+
+  a.musicControl('mode', null, 'single');
+  await wait(500);
+  check('能切到单曲循环', a.roomState.playMode === 'single' || a.roomState.mode === 'single',
+        'playMode=' + a.roomState.playMode);
+  a.close(); b.close();
+}
+
+/** 8. 服务端稳健性：畸形消息不能掀翻进程 */
+async function s8_畸形消息不崩() {
+  section('服务端稳健性');
+  const c = new IOSClient({ host: HOST, label: 'bad', deviceId: 'dev-bad-' + rnd() });
+  await c.connect();
+  c.ws.send('这不是 JSON');
+  c.ws.send(JSON.stringify({ type: 'music:control' }));
+  c.ws.send(JSON.stringify({ type: 'room:join', roomId: null, no: null }));
+  c.ws.send(JSON.stringify({ type: 'auth' }));
+  await wait(900);
+
+  const ping = new IOSClient({ host: HOST, label: 'ping', deviceId: 'dev-ping-' + rnd() });
+  const ok = await Promise.race([ping.connect().then(() => true), wait(3000).then(() => false)]);
+  check('发完畸形消息后服务端仍存活', ok);
+  ping.close(); c.close();
+}
+
+// ---------- 入口 ----------
+
+async function main() {
+  console.log('目标服务器: ' + HOST);
+  await s1_自动登录();
+  await s2_切后台回来不误报顶号();
+  await s3_旧客户端遗留连接也不误报();
+  await s4_异地登录仍然顶号();
+  await s5_同设备重复登录不误报();
+  await s6_自定义背景全链路();
+  await s7_音乐同步();
+  await s8_畸形消息不崩();
+
+  console.log('\n' + '='.repeat(46));
+  console.log(`结果: ${pass} 通过 / ${fail} 失败`);
+  if (fail) console.log('失败项:\n  - ' + failures.join('\n  - '));
+  process.exit(fail === 0 ? 0 : 1);
+}
+
+if (require.main === module) main();
+module.exports = { main };

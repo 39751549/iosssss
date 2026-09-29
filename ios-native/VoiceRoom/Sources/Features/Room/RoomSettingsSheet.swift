@@ -11,6 +11,14 @@ struct RoomSettingsSheet: View {
 
     @State private var roomName = ""
     @State private var background: RoomBackground = .aurora
+    /// 用户本次是否**主动点过**内置主题瓦片。
+    ///
+    /// 为什么需要这个标记：房间用的是上传的自定义背景时，
+    /// `onAppear` 里的 `RoomBackground(safeRaw:)` 解析不了 "/bg/xxx.png"，只能回退成 .aurora。
+    /// 若不加区分，"进设置 → 什么都不改直接点保存" 会因为
+    /// `background.rawValue("aurora") != state.room.background("/bg/xxx.png")` 成立，
+    /// 而把刚上传的自定义背景又覆盖回内置主题 —— 表现就是「自定义背景设了没用 / 一会儿就没了」。
+    @State private var themePicked = false
     @State private var showDestroyConfirm = false
     @State private var customNo = ""
     @State private var showBgPicker = false
@@ -182,6 +190,7 @@ struct RoomSettingsSheet: View {
                                 }
                                 Spacer()
                                 Button("清除") {
+                                    themePicked = false
                                     app.setRoomBackground(.aurora)
                                     app.showToast("已恢复默认主题", kind: .success)
                                 }
@@ -198,12 +207,15 @@ struct RoomSettingsSheet: View {
                         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 9), count: 3),
                                   spacing: 9) {
                             ForEach(RoomBackground.allCases) { bg in
-                                BackgroundOption(bg: bg, selected: background == bg && !isCustomBg) {
+                                BackgroundOption(bg: bg, selected: themePicked && background == bg) {
                                     guard isHost else {
                                         app.showToast("只有房主能修改房间背景", kind: .error)
                                         return
                                     }
-                                    withAnimation(.easeOut(duration: 0.16)) { background = bg }
+                                    withAnimation(.easeOut(duration: 0.16)) {
+                                        background = bg
+                                        themePicked = true   // 明确表达"我要换成这个主题"
+                                    }
                                 }
                             }
                         }
@@ -218,8 +230,9 @@ struct RoomSettingsSheet: View {
                     Button("保存") {
                         let n = roomName.trimmingCharacters(in: .whitespaces)
                         if !n.isEmpty && n != state.room.name { app.renameRoom(n) }
-                        // 已用自定义背景时，选内置主题才覆盖（避免上传后又被改回去）
-                        if background.rawValue != state.room.background {
+                        // 只有用户真的点了某个主题瓦片才覆盖背景。
+                        // 这样"上传了自定义背景 → 进来改个房间名 → 保存"不会把背景图reset掉。
+                        if themePicked, background.rawValue != state.room.background {
                             app.setRoomBackground(background)
                         }
                         app.showToast("房间设置已保存", kind: .success)
@@ -329,8 +342,10 @@ struct RoomSettingsSheet: View {
             isUploadingBg = false
             switch result {
             case .success(let url):
+                // 服务端已自动把这面背景设为我的房间背景并推送快照。
+                // 清掉"点过主题"的标记，防止紧接着点保存时又被内置主题覆盖。
+                themePicked = false
                 app.showToast("背景已应用，永久生效 ✨", kind: .success)
-                // 服务端已自动把这面背景设为我的房间背景并推送快照
                 _ = url
             case .failure(let err):
                 app.showToast("上传失败：\(err.localizedDescription)", kind: .error)

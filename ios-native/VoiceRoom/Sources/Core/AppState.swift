@@ -108,8 +108,20 @@ final class AppState: ObservableObject {
         if UserDefaults.standard.object(forKey: "vr_speaker") != nil {
             speakerEnabled = UserDefaults.standard.bool(forKey: "vr_speaker")
         }
+        // 把恢复出来的开关同步给引擎，否则下次开麦时引擎会按自己的默认值（开外放）
+        // 覆盖掉用户之前的选择，UI 显示"已关"而实际是外放
+        voice.setSpeakerEnabled(speakerEnabled)
         if let cached = LocalStore.loadUser() { me = cached }
         connection.connect()
+    }
+
+    /// App 进入后台时调用。
+    /// 不在房间里就彻底释放音频会话 —— 否则「打开过 App」这件事本身会让系统
+    /// 认为麦克风/扬声器仍被占用（那是上一版在 init 里激活会话留下的坑）。
+    /// 在房间里则保留会话，这样切后台/锁屏能继续听歌、继续语音。
+    func appDidEnterBackground() {
+        guard !inRoom else { return }
+        voice.stopAll()
     }
 
     /// App 回到前台时调用。
@@ -245,6 +257,9 @@ final class AppState: ObservableObject {
             inRoom = true
             roomMinimized = false
             lastRoomId = roomId
+            // 进房只需"听到别人"：开播放通道即可，先不碰麦克风。
+            // 等用户真的开麦（点麦位）再切到双向语音，避免一进房就亮麦克风提示。
+            voice.enterListenMode()
 
         case let .joinFail(msg):
             showToast(msg, kind: .error)
