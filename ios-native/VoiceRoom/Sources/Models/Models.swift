@@ -155,9 +155,51 @@ struct VRSong: Codable, Identifiable, Equatable {
     var url: String
     var by: String
     var at: Double
+    /// 歌手（服务端可能不下发，容错为 nil）
+    var artist: String?
+    /// 曲库标识：本地曲库为 libId；在线曲库为 gd|源|歌id
+    var libraryId: String?
 }
 
 // MARK: - 房间完整状态快照
+
+/// 播放模式：列表循环 / 单曲循环 / 列表播完结束
+enum VRPlayMode: String, Codable, CaseIterable, Identifiable {
+    case order   // 列表循环
+    case single  // 单曲循环
+    case once    // 列表播完结束
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .order:  return "列表循环"
+        case .single: return "单曲循环"
+        case .once:   return "播完结束"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .order:  return "🔁"
+        case .single: return "🔂"
+        case .once:   return "➡️"
+        }
+    }
+
+    /// 依次切换：列表循环 → 单曲循环 → 播完结束
+    var next: VRPlayMode {
+        switch self {
+        case .order:  return .single
+        case .single: return .once
+        case .once:   return .order
+        }
+    }
+
+    init(safeRaw: String) {
+        self = VRPlayMode(rawValue: safeRaw) ?? .order
+    }
+}
 
 struct VRRoomState: Codable, Equatable {
     var room: VRRoom
@@ -171,6 +213,23 @@ struct VRRoomState: Codable, Equatable {
     var now: Double
     var chatLog: [VRChatMessage]
     var giftList: [VRGift]
+    /// 播放模式（服务端下发，缺省为列表循环）
+    var playMode: String?
+    /// 管理员设置的全局背景模板（对所有房间通用；相对路径 /bg/xxx.gif）
+    var globalBg: String?
+
+    /// 播放模式（安全解析）
+    var mode: VRPlayMode { VRPlayMode(safeRaw: playMode ?? "order") }
+
+    /// 有效背景：房间级自定义背景优先；否则用全局模板
+    var effectiveBackground: String {
+        let rb = room.background
+        // 房间背景是上传的图片/GIF（以 / 或 http 开头）→ 直接用
+        if rb.hasPrefix("/") || rb.hasPrefix("http") { return rb }
+        // 否则用全局模板（管理员上传，对所有房间通用）
+        if let g = globalBg, !g.isEmpty { return g }
+        return rb
+    }
 
     /// 按麦位号取成员
     func member(atSeat seat: Int) -> VRMember? {

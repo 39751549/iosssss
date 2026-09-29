@@ -74,7 +74,8 @@ enum VRClientMessage {
     case musicAdd(title: String, artist: String, url: String, by: String, libraryId: String?)
     /// 立即点播：替换当前歌曲
     case musicPlayNow(libraryId: String, by: String, title: String?, artist: String?)
-    case musicControl(action: String, songId: String?)
+    /// 播放控制：action = play/pause/next/select/remove/ended/mode/clear/reload
+    case musicControl(action: String, songId: String?, mode: String?)
     /// VIP 自定义房间号（4-10 位数字或字母，全服唯一，永久保存）
     case roomSetNo(roomId: String, userId: String, no: String)
     // WebRTC 信令
@@ -151,9 +152,10 @@ enum VRClientMessage {
             if let artist, !artist.isEmpty { p["artist"] = artist }
             return p
 
-        case let .musicControl(action, songId):
+        case let .musicControl(action, songId, mode):
             var p: [String: Any] = ["type": "music:control", "action": action]
             if let songId { p["songId"] = songId }
+            if let mode { p["mode"] = mode }
             return p
 
         case let .roomSetNo(roomId, userId, no):

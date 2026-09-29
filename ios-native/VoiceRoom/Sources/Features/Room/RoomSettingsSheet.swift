@@ -13,9 +13,25 @@ struct RoomSettingsSheet: View {
     @State private var background: RoomBackground = .aurora
     @State private var showDestroyConfirm = false
     @State private var customNo = ""
+    @State private var showBgPicker = false
+    @State private var isUploadingBg = false
 
     private var isHost: Bool { app.isHost }
     private var isVip: Bool { app.me?.vip == true }
+
+    /// 当前房间是否用了上传的自定义背景
+    private var isCustomBg: Bool {
+        let bg = state.room.background
+        return bg.hasPrefix("/") || bg.hasPrefix("http")
+    }
+
+    private var customBgURL: URL? {
+        let bg = state.room.background
+        guard bg.hasPrefix("/") || bg.hasPrefix("http") else { return nil }
+        if bg.hasPrefix("http") { return URL(string: bg) }
+        guard let base = VRConfig.baseURL else { return nil }
+        return URL(string: bg, relativeTo: base)
+    }
 
     var body: some View {
         ZStack {
@@ -105,14 +121,84 @@ struct RoomSettingsSheet: View {
 
                     // 背景
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("房间背景")
-                            .font(.system(size: 12.5, weight: .semibold))
-                            .foregroundColor(VRTheme.textDim)
+                        HStack(spacing: 6) {
+                            Text("房间背景")
+                                .font(.system(size: 12.5, weight: .semibold))
+                                .foregroundColor(VRTheme.textDim)
+                            Spacer()
+                            // 上传自定义背景（支持 GIF 动图，永久生效）
+                            Button {
+                                showBgPicker = true
+                            } label: {
+                                Text("🖼️ 上传自定义")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundColor(VRTheme.text)
+                                    .padding(.horizontal, 11)
+                                    .frame(height: 30)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .fill(Color(hex: "27436B").opacity(0.1))
+                                    )
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .strokeBorder(VRTheme.border, lineWidth: 1)
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(!isHost)
+                            .opacity(isHost ? 1 : 0.45)
+                        }
+
+                        if isUploadingBg {
+                            HStack(spacing: 8) {
+                                ProgressView().scaleEffect(0.8)
+                                Text("正在上传背景…")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(VRTheme.textDim)
+                            }
+                        }
+
+                        // 已设置自定义背景：预览 + 清除
+                        if isCustomBg {
+                            HStack(spacing: 10) {
+                                CachedAsyncImage(url: customBgURL) { phase in
+                                    if case .success(let img) = phase {
+                                        Image(uiImage: img)
+                                            .resizable().scaledToFill()
+                                    } else {
+                                        Color(hex: "27436B").opacity(0.08)
+                                    }
+                                }
+                                .frame(width: 54, height: 54)
+                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("自定义背景已生效")
+                                        .font(.system(size: 12.5, weight: .semibold))
+                                        .foregroundColor(VRTheme.green)
+                                    Text("支持 GIF 动图 · 永久保存 · 全房可见")
+                                        .font(.system(size: 10.5))
+                                        .foregroundColor(VRTheme.textMute)
+                                }
+                                Spacer()
+                                Button("清除") {
+                                    app.setRoomBackground(.aurora)
+                                    app.showToast("已恢复默认主题", kind: .success)
+                                }
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(VRTheme.red.opacity(0.9))
+                            }
+                            .padding(11)
+                            .background(
+                                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                                    .fill(VRTheme.green.opacity(0.08))
+                            )
+                        }
 
                         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 9), count: 3),
                                   spacing: 9) {
                             ForEach(RoomBackground.allCases) { bg in
-                                BackgroundOption(bg: bg, selected: background == bg) {
+                                BackgroundOption(bg: bg, selected: background == bg && !isCustomBg) {
                                     guard isHost else {
                                         app.showToast("只有房主能修改房间背景", kind: .error)
                                         return
@@ -121,11 +207,18 @@ struct RoomSettingsSheet: View {
                                 }
                             }
                         }
+
+                        if let g = state.globalBg, !g.isEmpty {
+                            Text("💡 管理员已设置全局背景模板，所有房间通用；上传自定义背景可覆盖它。")
+                                .font(.system(size: 11))
+                                .foregroundColor(VRTheme.textMute)
+                        }
                     }
 
                     Button("保存") {
                         let n = roomName.trimmingCharacters(in: .whitespaces)
                         if !n.isEmpty && n != state.room.name { app.renameRoom(n) }
+                        // 已用自定义背景时，选内置主题才覆盖（避免上传后又被改回去）
                         if background.rawValue != state.room.background {
                             app.setRoomBackground(background)
                         }
@@ -193,9 +286,98 @@ struct RoomSettingsSheet: View {
             Button("取消", role: .cancel) {}
         }
         .vrSheet()
+        .sheet(isPresented: $showBgPicker) {
+            VRPhotoPicker { img, raw in
+                uploadBackground(img: img, raw: raw)
+            }
+        }
         .onAppear {
             roomName = state.room.name
             background = RoomBackground(safeRaw: state.room.background)
         }
+    }
+
+    /// 上传房间自定义背景（支持 GIF 动图；服务端存文件，永久生效）
+    private func uploadBackground(img: UIImage, raw: Data?) {
+        guard isHost else {
+            app.showToast("只有房主能修改房间背景", kind: .error)
+            return
+        }
+        isUploadingBg = true
+
+        // 生成 dataURL：GIF 保留动画，PNG 保留透明，其余转 JPEG
+        var dataURL: String?
+        if let raw, let kind = imageKind(raw), kind == "gif", raw.count <= 6 * 1024 * 1024 {
+            dataURL = "data:image/gif;base64," + raw.base64EncodedString()
+        } else if let raw, let kind = imageKind(raw), kind == "png",
+                  let png = img.resized(maxSide: 1440).pngData(), png.count < 5 * 1024 * 1024 {
+            dataURL = "data:image/png;base64," + png.base64EncodedString()
+        } else {
+            let jpeg = img.resized(maxSide: 1440).jpegData(compressionQuality: 0.86)
+            if let jpeg, jpeg.count < 5 * 1024 * 1024 {
+                dataURL = "data:image/jpeg;base64," + jpeg.base64EncodedString()
+            }
+        }
+
+        guard let durl = dataURL else {
+            isUploadingBg = false
+            app.showToast("图片太大了，换张小一点的吧", kind: .error)
+            return
+        }
+
+        BGUploader.upload(dataURL: durl, userId: app.userId) { result in
+            isUploadingBg = false
+            switch result {
+            case .success(let url):
+                app.showToast("背景已应用，永久生效 ✨", kind: .success)
+                // 服务端已自动把这面背景设为我的房间背景并推送快照
+                _ = url
+            case .failure(let err):
+                app.showToast("上传失败：\(err.localizedDescription)", kind: .error)
+            }
+        }
+    }
+
+    private func imageKind(_ data: Data) -> String? {
+        guard data.count >= 8 else { return nil }
+        let b = [UInt8](data.prefix(8))
+        if b[0] == 0x47, b[1] == 0x49, b[2] == 0x46 { return "gif" }
+        if b[0] == 0x89, b[1] == 0x50, b[2] == 0x4E, b[3] == 0x47 { return "png" }
+        return "other"
+    }
+}
+
+// MARK: - 背景上传
+
+/// 房间背景上传（dataURL → /api/upload-bg）
+enum BGUploader {
+    static func upload(dataURL: String, userId: String,
+                       completion: @escaping (Result<String, Error>) -> Void) {
+        guard let base = VRConfig.baseURL else {
+            completion(.failure(VRAPIError.noServer)); return
+        }
+        var req = URLRequest(url: base.appendingPathComponent("api/upload-bg"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.timeoutInterval = 60
+        let body: [String: Any] = ["userId": userId, "dataUrl": dataURL]
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        URLSession.shared.dataTask(with: req) { data, _, err in
+            DispatchQueue.main.async {
+                if let err { completion(.failure(err)); return }
+                guard let data,
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    completion(.failure(VRAPIError.empty)); return
+                }
+                if let ok = json["ok"] as? Bool, ok, let url = json["url"] as? String {
+                    completion(.success(url))
+                } else {
+                    let msg = json["msg"] as? String ?? "上传失败"
+                    completion(.failure(NSError(domain: "bg", code: -1,
+                                                userInfo: [NSLocalizedDescriptionKey: msg])))
+                }
+            }
+        }.resume()
     }
 }

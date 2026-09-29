@@ -236,11 +236,14 @@ struct UserCardSheet: View {
                         HStack(spacing: 10) {
                             statBox(title: "💰 金币", value: shortNum(member.user.coins), color: VRTheme.gold)
                             statBox(title: "💖 魅力值", value: shortNum(member.user.charm), color: VRTheme.pink)
-                            statBox(title: "🎙 状态",
-                                    value: member.muted ? "静音" : (member.seat >= 0 ? "在麦" : "听众"),
-                                    color: member.muted ? VRTheme.textDim : VRTheme.green)
+                            statBox(title: "👑 会员",
+                                    value: member.user.vip ? "VIP\(member.user.vipLevel)" : "普通",
+                                    color: member.user.vip ? VRTheme.gold : VRTheme.textDim)
                         }
                         .padding(.horizontal, 20)
+
+                        // VIP 等级与刷礼物挂钩：展示晋升进度
+                        vipProgress
 
                         // 操作
                         VStack(spacing: 10) {
@@ -295,5 +298,84 @@ struct UserCardSheet: View {
             RoundedRectangle(cornerRadius: 13, style: .continuous)
                 .strokeBorder(VRTheme.border, lineWidth: 1)
         )
+    }
+
+    /// VIP 晋升进度：魅力值越高等级越高（与刷礼物挂钩）
+    @ViewBuilder
+    private var vipProgress: some View {
+        let charm = member.user.charm
+        let cur = VIPCharmStairs.level(for: charm)
+        let next = VIPCharmStairs.nextThreshold(for: charm)
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 6) {
+                Text("👑 VIP 等级")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundColor(VRTheme.textDim)
+                Spacer()
+                Text(member.user.vip ? "VIP\(member.user.vipLevel)" : "未激活")
+                    .font(.system(size: 11.5, weight: .bold))
+                    .foregroundColor(member.user.vip ? VRTheme.gold : VRTheme.textMute)
+            }
+
+            if let nxt = next {
+                GeometryReader { geo in
+                    let prev = VIPCharmStairs.threshold(for: cur)
+                    let span = max(1, nxt - prev)
+                    let done = min(1, max(0, Double(charm - prev) / Double(span)))
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color(hex: "27436B").opacity(0.12))
+                        Capsule()
+                            .fill(VRTheme.goldGradient)
+                            .frame(width: max(3, geo.size.width * done))
+                    }
+                }
+                .frame(height: 6)
+
+                Text("再获 \(shortNum(max(0, nxt - charm))) 魅力值可升 VIP\(cur + 1)（刷礼物即涨魅力值）")
+                    .font(.system(size: 10.5))
+                    .foregroundColor(VRTheme.textMute)
+            } else {
+                Text("已达最高 VIP 等级 🎉")
+                    .font(.system(size: 10.5))
+                    .foregroundColor(VRTheme.gold)
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .fill(VRTheme.gold.opacity(0.09))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .strokeBorder(VRTheme.gold.opacity(0.35), lineWidth: 1)
+        )
+        .padding(.horizontal, 20)
+    }
+}
+
+// MARK: - VIP 魅力值阶梯（与服务端 VIP_CHARM_STAIRS 保持一致）
+
+enum VIPCharmStairs {
+    /// 与服务端 server.js 的 VIP_CHARM_STAIRS 严格对应
+    static let stairs: [Int] = [100, 500, 2000, 8000, 30000, 100000,
+                                300000, 1000000, 3000000, 10000000, 30000000]
+
+    /// 当前魅力值对应的 VIP 等级
+    static func level(for charm: Int) -> Int {
+        var lv = 0
+        for (i, t) in stairs.enumerated() where charm >= t { lv = i + 1 }
+        return lv
+    }
+
+    /// 该等级的魅力值门槛
+    static func threshold(for level: Int) -> Int {
+        guard level >= 1, level <= stairs.count else { return 0 }
+        return stairs[level - 1]
+    }
+
+    /// 升到下一级所需魅力值（已满级返回 nil）
+    static func nextThreshold(for charm: Int) -> Int? {
+        for t in stairs where charm < t { return t }
+        return nil
     }
 }

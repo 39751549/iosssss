@@ -67,6 +67,14 @@ final class AppState: ObservableObject {
         voice.onSpeakingChanged = { [weak self] ids in
             self?.speakingIds = ids
         }
+        // 音乐播完 → 上报服务端按播放模式推进歌单
+        MusicPlayer.shared.onPlaybackEnded = { [weak self] in
+            self?.connection.send(.musicControl(action: "ended", songId: nil, mode: nil))
+        }
+        // 直链失效 → 请服务端重解析（修复"重进房间音乐放不了"）
+        MusicPlayer.shared.onPlaybackFailed = { [weak self] in
+            self?.connection.send(.musicControl(action: "reload", songId: nil, mode: nil))
+        }
         // 连接建立后自动登录（有已保存/待确认凭据时；断线重连恢复会话）
         connection.$status
             .receive(on: DispatchQueue.main)
@@ -403,8 +411,16 @@ final class AppState: ObservableObject {
         connection.send(.musicPlayNow(libraryId: libraryId, by: by, title: title, artist: artist))
     }
 
-    func musicControl(_ action: String, songId: String? = nil) {
-        connection.send(.musicControl(action: action, songId: songId))
+    func musicControl(_ action: String, songId: String? = nil, mode: String? = nil) {
+        connection.send(.musicControl(action: action, songId: songId, mode: mode))
+    }
+
+    /// 切换播放模式（列表循环 → 单曲循环 → 播完结束）
+    func cyclePlayMode() {
+        guard let cur = roomState else { return }
+        let next = cur.mode.next
+        connection.send(.musicControl(action: "mode", songId: nil, mode: next.rawValue))
+        showToast("\(next.icon) \(next.label)", kind: .success)
     }
 
     // MARK: - 礼物动画

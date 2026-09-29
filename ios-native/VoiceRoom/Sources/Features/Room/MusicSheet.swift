@@ -39,6 +39,9 @@ struct MusicSheet: View {
     @ObservedObject private var history = MusicHistory.shared
     @ObservedObject private var player = MusicPlayer.shared
 
+    /// 歌单上限（与服务端一致）
+    private let playlistLimit = 20
+
     var body: some View {
         ZStack {
             VRTheme.bg.ignoresSafeArea()
@@ -49,6 +52,9 @@ struct MusicSheet: View {
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
+                        // 播放器主控（有歌时常驻，含模式/音量/进度）
+                        playerBar
+
                         switch tab {
                         case .search:    searchSection
                         case .playlist:  playlistSection
@@ -78,6 +84,14 @@ struct MusicSheet: View {
             Text("一起听歌 🎵")
                 .font(.system(size: 18, weight: .bold))
                 .foregroundColor(VRTheme.text)
+            if !state.playlist.isEmpty {
+                Text("\(state.playlist.count)/\(playlistLimit)")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(state.playlist.count >= playlistLimit ? VRTheme.red : VRTheme.textDim)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color(hex: "27436B").opacity(0.08)))
+            }
             Spacer()
             Button { dismiss() } label: {
                 Text("✕")
@@ -124,11 +138,131 @@ struct MusicSheet: View {
         }
     }
 
+    // MARK: - 播放器主控条（歌名 / 倒计时 / 模式 / 音量）
+
+    @ViewBuilder
+    private var playerBar: some View {
+        if let song = state.currentSong {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Text(state.playing ? "🔊" : "⏸").font(.system(size: 16))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(song.title)
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundColor(VRTheme.text)
+                            .lineLimit(1)
+                        Text("由 \(song.by) 点播")
+                            .font(.system(size: 11))
+                            .foregroundColor(VRTheme.textDim)
+                    }
+                    Spacer()
+                    // 收藏
+                    Button {
+                        let added = history.toggleFavorite(
+                            songId: stableFavId(song), title: song.title,
+                            artist: song.artist ?? "",
+                            url: absoluteURL(song.url), source: .library)
+                        app.showToast(added ? "已收藏 ⭐" : "已取消收藏")
+                    } label: {
+                        Text(history.isFavorite(songId: stableFavId(song)) ? "⭐" : "☆")
+                            .font(.system(size: 19))
+                            .frame(width: 32, height: 32)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                // 进度条 + 时间倒计时
+                VStack(spacing: 4) {
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color(hex: "27436B").opacity(0.12))
+                            Capsule()
+                                .fill(VRTheme.brandGradient)
+                                .frame(width: max(2, geo.size.width * player.progressFraction))
+                        }
+                    }
+                    .frame(height: 5)
+
+                    HStack {
+                        Text(player.positionText)
+                            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                            .foregroundColor(VRTheme.textDim)
+                        Spacer()
+                        Text(player.durationText)
+                            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                            .foregroundColor(VRTheme.textDim)
+                    }
+                }
+
+                // 控制：播放/暂停 · 下一首 · 播放模式
+                HStack(spacing: 9) {
+                    Button(state.playing ? "⏸ 暂停" : "▶️ 播放") {
+                        app.musicControl(state.playing ? "pause" : "play")
+                    }
+                    .buttonStyle(VRButtonStyle())
+
+                    Button("⏭ 下一首") { app.musicControl("next") }
+                        .buttonStyle(VRButtonStyle())
+
+                    // 三种模式循环切换
+                    Button {
+                        app.cyclePlayMode()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(state.mode.icon).font(.system(size: 13))
+                            Text(state.mode.label).font(.system(size: 13, weight: .semibold))
+                        }
+                        .foregroundColor(VRTheme.text)
+                        .frame(minHeight: 46)
+                        .padding(.horizontal, 14)
+                        .background(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(Color.white.opacity(0.85))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .strokeBorder(VRTheme.brand.opacity(0.5), lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                // 音量
+                HStack(spacing: 9) {
+                    Text("🔈").font(.system(size: 13))
+                    Slider(value: Binding(
+                        get: { Double(player.volume) },
+                        set: { player.setVolume(Float($0)) }
+                    ), in: 0...1)
+                    .tint(VRTheme.brand)
+                    Text("\(Int(player.volume * 100))%")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundColor(VRTheme.textDim)
+                        .frame(width: 36, alignment: .trailing)
+                }
+            }
+            .padding(14)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(
+                        LinearGradient(colors: [VRTheme.brand.opacity(0.28), VRTheme.brand2.opacity(0.16)],
+                                       startPoint: .topLeading, endPoint: .bottomTrailing)
+                    )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(VRTheme.brand.opacity(0.6), lineWidth: 1)
+            )
+        }
+    }
+
     // MARK: - 搜索
 
     private var searchSection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            nowPlayingCard
+            if state.currentSong == nil {
+                hintBox("还没有人点播歌曲\n搜一首试试 🎵")
+            }
 
             // 搜索框
             HStack(spacing: 9) {
@@ -215,8 +349,8 @@ struct MusicSheet: View {
     private func songRow(_ song: VRLibrarySong) -> some View {
         let cached = cache.isCached(song.cacheKey)
         let downloading = cache.isDownloading(song.cacheKey)
-        let fav = history.isFavorite(songId: song.id)
-        let isCurrent = state.currentSong?.url.hasSuffix(song.id) == true
+        let fav = history.isFavorite(songId: "lib_\(song.id)")
+        let isCurrent = state.currentSong?.libraryId == song.id
             || state.currentSong?.url.contains(song.id) == true
 
         return VStack(spacing: 8) {
@@ -297,70 +431,6 @@ struct MusicSheet: View {
         )
     }
 
-    // MARK: - 当前播放卡片
-
-    private var nowPlayingCard: some View {
-        Group {
-            if let song = state.currentSong {
-                VStack(alignment: .leading, spacing: 9) {
-                    Text(state.playing ? "正在播放" : "已暂停")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(state.playing ? VRTheme.green : VRTheme.textDim)
-
-                    HStack(spacing: 8) {
-                        Text("🎵").font(.system(size: 17))
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(song.title)
-                                .font(.system(size: 15, weight: .bold))
-                                .foregroundColor(VRTheme.text)
-                                .lineLimit(1)
-                            Text("由 \(song.by) 点播")
-                                .font(.system(size: 11))
-                                .foregroundColor(VRTheme.textDim)
-                        }
-                        Spacer()
-                        // 收藏当前歌
-                        Button {
-                            let added = history.toggleFavorite(
-                                songId: song.id, title: song.title, artist: "",
-                                url: absoluteURL(song.url), source: .library)
-                            app.showToast(added ? "已收藏 ⭐" : "已取消收藏")
-                        } label: {
-                            Text(history.isFavorite(songId: song.id) ? "⭐" : "☆")
-                                .font(.system(size: 19))
-                                .frame(width: 32, height: 32)
-                        }
-                        .buttonStyle(.plain)
-                    }
-
-                    HStack(spacing: 9) {
-                        Button(state.playing ? "⏸ 暂停" : "▶️ 播放") {
-                            app.musicControl(state.playing ? "pause" : "play")
-                        }
-                        .buttonStyle(VRButtonStyle())
-
-                        Button("⏭ 下一首") { app.musicControl("next") }
-                            .buttonStyle(VRButtonStyle())
-                    }
-                }
-                .padding(14)
-                .background(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(
-                            LinearGradient(colors: [VRTheme.brand.opacity(0.28), VRTheme.brand2.opacity(0.16)],
-                                           startPoint: .topLeading, endPoint: .bottomTrailing)
-                        )
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .strokeBorder(VRTheme.brand.opacity(0.6), lineWidth: 1)
-                )
-            } else {
-                hintBox("还没有人点播歌曲\n搜一首试试 🎵")
-            }
-        }
-    }
-
     // MARK: - 房间歌单
 
     private var playlistSection: some View {
@@ -368,9 +438,15 @@ struct MusicSheet: View {
             if state.playlist.isEmpty {
                 hintBox("歌单是空的\n搜索歌曲点「加入歌单」吧")
             } else {
-                Text("共 \(state.playlist.count) 首")
-                    .font(.system(size: 12))
-                    .foregroundColor(VRTheme.textDim)
+                HStack {
+                    Text("共 \(state.playlist.count)/\(playlistLimit) 首")
+                        .font(.system(size: 12))
+                        .foregroundColor(VRTheme.textDim)
+                    Spacer()
+                    Button("清空") { app.musicControl("clear") }
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(VRTheme.red.opacity(0.9))
+                }
 
                 ForEach(Array(state.playlist.enumerated()), id: \.element.id) { idx, song in
                     let isCurrent = state.currentSong?.id == song.id
@@ -426,7 +502,7 @@ struct MusicSheet: View {
     private var recentSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text(history.recent.isEmpty ? "" : "共 \(history.recent.count) 条")
+                Text(history.recent.isEmpty ? "" : "共 \(history.recent.count) 首")
                     .font(.system(size: 12))
                     .foregroundColor(VRTheme.textDim)
                 Spacer()
@@ -465,9 +541,10 @@ struct MusicSheet: View {
         }
     }
 
-    /// 记录行（最近 / 收藏共用）
+    /// 记录行（最近 / 收藏共用）—— 带收藏按钮，可直接切换
     private func recordRow(_ r: VRMusicRecord, showDate: Bool) -> some View {
-        HStack(spacing: 10) {
+        let fav = history.isFavorite(songId: r.songId)
+        return HStack(spacing: 10) {
             ZStack {
                 RoundedRectangle(cornerRadius: 11, style: .continuous)
                     .fill(Color(hex: "27436B").opacity(0.08))
@@ -499,6 +576,19 @@ struct MusicSheet: View {
             }
 
             Spacer()
+
+            // 收藏 / 取消收藏
+            Button {
+                let added = history.toggleFavorite(
+                    songId: r.songId, title: r.title, artist: r.artist,
+                    url: r.url, source: r.source)
+                app.showToast(added ? "已收藏 ⭐" : "已取消收藏")
+            } label: {
+                Text(fav ? "⭐" : "☆")
+                    .font(.system(size: 17))
+                    .frame(width: 32, height: 32)
+            }
+            .buttonStyle(.plain)
 
             // 点播到房间
             Button("点播") { playRecord(r) }
@@ -615,26 +705,21 @@ struct MusicSheet: View {
 
     /// 立即点播：全房间同步切歌，并写入最近听歌
     private func playNow(_ song: VRLibrarySong) {
-        if song.url.isEmpty {
-            // 在线曲库歌曲（GD 直链由服务器实时解析，全房间同步）
-            app.playLibrarySong(libraryId: song.id, by: app.me?.name ?? "我",
-                                title: song.title, artist: song.artist)
-            app.showToast("正在为全房间点播…", kind: .success)
-            return
-        }
-        guard let url = song.playURL?.absoluteString else {
-            app.showToast("歌曲地址无效", kind: .error)
-            return
-        }
         app.playLibrarySong(libraryId: song.id, by: app.me?.name ?? "我",
                             title: song.title, artist: song.artist)
-        history.recordPlay(songId: song.id, title: song.title, artist: song.artist,
-                           url: url, source: .library)
+        if let url = song.playURL?.absoluteString {
+            history.recordPlay(songId: "lib_\(song.id)", title: song.title,
+                               artist: song.artist, url: url, source: .library)
+        }
         app.showToast("正在为全房间点播…", kind: .success)
     }
 
-    /// 加入歌单：不打断当前播放
+    /// 加入歌单：不打断当前播放（超过 20 首给出明确提示）
     private func addToPlaylist(_ song: VRLibrarySong) {
+        if state.playlist.count >= playlistLimit {
+            app.showToast("歌单最多 \(playlistLimit) 首，先移除几首吧", kind: .error)
+            return
+        }
         app.addLibrarySong(libraryId: song.id, title: song.title, artist: song.artist,
                            by: app.me?.name ?? "我")
         app.showToast("已加入歌单", kind: .success)
@@ -658,6 +743,10 @@ struct MusicSheet: View {
         // 曲库歌曲优先走 libraryId 走服务端曲库路径
         if r.source == .library, let libId = libraryId(from: url) {
             app.playLibrarySong(libraryId: libId, by: app.me?.name ?? "我")
+        } else if r.songId.hasPrefix("gd_") {
+            // 在线曲库记录：songId 形如 gd_<libraryId>
+            let lid = String(r.songId.dropFirst(3))
+            app.playLibrarySong(libraryId: lid, by: app.me?.name ?? "我", title: r.title)
         } else {
             app.addSongByURL(title: r.title, url: url.absoluteString)
         }
@@ -672,6 +761,19 @@ struct MusicSheet: View {
         guard let range = s.range(of: "/api/music/file/") else { return nil }
         let id = String(s[range.upperBound...])
         return id.isEmpty ? nil : id
+    }
+
+    /// 收藏用的稳定 id（与 MusicPlayer 记录一致）
+    private func stableFavId(_ song: VRSong) -> String {
+        if let lid = song.libraryId, !lid.isEmpty {
+            return song.url.contains("/api/music/file/") ? "lib_\(lid)" : "gd_\(lid)"
+        }
+        let abs = absoluteURL(song.url)
+        if let r = abs.range(of: "/api/music/file/") {
+            let libId = String(abs[r.upperBound...])
+            if !libId.isEmpty { return "lib_\(libId)" }
+        }
+        return "url_\(abs.split(separator: "?").first.map(String.init) ?? abs)"
     }
 
     private func absoluteURL(_ s: String) -> String {

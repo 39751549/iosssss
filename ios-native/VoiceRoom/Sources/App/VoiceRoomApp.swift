@@ -11,7 +11,7 @@ struct VoiceRoomApp: App {
             RootView()
                 .environmentObject(app)
                 .environmentObject(serverStore)
-                .preferredColorScheme(.dark)
+                .preferredColorScheme(.light)
                 .onAppear { app.start() }
         }
     }
