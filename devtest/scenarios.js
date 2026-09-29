@@ -283,6 +283,70 @@ async function s8_畸形消息不崩() {
   ping.close(); c.close();
 }
 
+/**
+ * 9. 自定义背景的持久性：离开房间再进 / 切后台回来 / 重开 App 都不能变回默认。
+ *
+ * 这是用户报的「离开房间再进去背景就变默认了、不是永久的」的回归测试。
+ * 修之前服务端其实是持久的，问题在客户端把图片状态放在了会被重建的视图里；
+ * 这条场景锁住服务端这一侧的行为，客户端那侧靠 AppState 统一持有图片来保证。
+ */
+async function s9_背景进出房间仍在() {
+  section('自定义背景持久性（退出重进 / 前后台 / 重开 App）');
+  const uname = 'bgk_' + rnd();
+  const dev = 'dev-bgk-' + rnd();
+
+  const c = new IOSClient({ host: HOST, label: 'bgk', deviceId: dev, username: uname, password: 'pw123456' });
+  await c.connect();
+  await c.signup(uname);
+  const roomId = await c.createRoom('背景持久房');
+  await c.joinRoom(roomId);
+
+  const png = makePng(200 * 1024);
+  const dataUrl = 'data:image/png;base64,' + png.toString('base64');
+  const up = await post('/api/upload-bg', { userId: c.userId, dataUrl });
+  await wait(800);
+  const bgUrl = c.roomState && c.roomState.room.background;
+  check('上传后背景为自定义图', up.code === 200 && typeof bgUrl === 'string' && bgUrl.startsWith('/bg/'),
+        'background=' + JSON.stringify(bgUrl));
+
+  // 离开房间 → 再进
+  c.send({ type: 'room:leave' });
+  await wait(600);
+  await c.joinRoom(roomId);
+  check('离开再进房，背景仍是自定义图', c.roomState && c.roomState.room.background === bgUrl,
+        'background=' + JSON.stringify(c.roomState && c.roomState.room.background));
+
+  // 切后台 → 回前台（重连 + 自动回房）
+  c.roomState = null;
+  c.background();
+  await c.foreground();
+  check('切后台再回来，背景仍是自定义图', c.roomState && c.roomState.room.background === bgUrl,
+        'background=' + JSON.stringify(c.roomState && c.roomState.room.background));
+
+  // 杀进程重开：全新连接 + 全新客户端对象
+  c.destroy();
+  await wait(400);
+  const c2 = new IOSClient({ host: HOST, label: 'bgk2', deviceId: dev, username: uname, password: 'pw123456' });
+  await c2.connect();
+  await c2.silentAuth();
+  c2.send({ type: 'room:my', userId: c2.userId });
+  await wait(700);
+  const my = c2.received.filter((m) => m.type === 'room:my').pop();
+  check('重开 App 后「我的房间」背景仍是自定义图',
+        my && my.data && my.data.background === bgUrl,
+        'background=' + JSON.stringify(my && my.data && my.data.background));
+
+  await c2.joinRoom(roomId);
+  check('重开 App 后进房，背景仍是自定义图', c2.roomState && c2.roomState.room.background === bgUrl,
+        'background=' + JSON.stringify(c2.roomState && c2.roomState.room.background));
+
+  // 背景文件本身必须能下载（客户端渲染才有图可显示）
+  const f = await get(bgUrl);
+  check('背景文件可下载', f.code === 200 && f.len > 0, 'HTTP ' + f.code + ' 大小 ' + f.len);
+
+  c2.close();
+}
+
 // ---------- 入口 ----------
 
 async function main() {
@@ -293,6 +357,7 @@ async function main() {
   await s4_异地登录仍然顶号();
   await s5_同设备重复登录不误报();
   await s6_自定义背景全链路();
+  await s9_背景进出房间仍在();
   await s7_音乐同步();
   await s8_畸形消息不崩();
 

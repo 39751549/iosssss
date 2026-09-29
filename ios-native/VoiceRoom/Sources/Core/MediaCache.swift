@@ -23,7 +23,14 @@ final class MediaCache: NSObject {
     }()
 
     private let fm = FileManager.default
-    private let ioQueue = DispatchQueue(label: "vr.media.cache.io", qos: .utility)
+    /// 取图专用队列：必须用 .userInitiated。
+    /// 之前是 .utility，系统会把任务压到最低优先级 —— 进房那一刻正忙着渲染，
+    /// 磁盘读迟迟排不上队，背景图要等好几秒才出来，这期间用户看到的是兜底渐变，
+    /// 体感就是"背景变回默认了 / 要等好久才生效"。
+    private let ioQueue = DispatchQueue(label: "vr.media.cache.io", qos: .userInitiated)
+    /// 维护队列（LRU 时间戳、超限清理）与取图分离，
+    /// 否则一次全目录扫描会把后面的读图请求全堵住。
+    private let maintenanceQueue = DispatchQueue(label: "vr.media.cache.maint", qos: .background)
     private var root: URL!
     private let limitBytes: Int64 = 200 * 1024 * 1024
 
@@ -172,7 +179,7 @@ final class MediaCache: NSObject {
     }
 
     private func touch(_ url: URL) {
-        ioQueue.async {
+        maintenanceQueue.async {
             try? self.fm.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
         }
     }
@@ -180,7 +187,7 @@ final class MediaCache: NSObject {
     // MARK: - 容量管理（LRU）
 
     private func enforceLimit() {
-        ioQueue.async { [weak self] in
+        maintenanceQueue.async { [weak self] in
             guard let self else { return }
             guard let files = try? self.fm.contentsOfDirectory(
                 at: self.root,
@@ -255,31 +262,45 @@ struct CachedAsyncImage: View {
     }
 
     @State private var image: UIImage?
+    /// 当前正在加载的 URL。放在 @State 里（引用盒）才能被回调读到"最新值"，
+    /// 否则闭包捕获的是结构体快照，判不出回调是否已经过期。
+    @State private var loadingKey: String?
 
     var body: some View {
-        Group {
+        ZStack {
+            // 零尺寸的实体子视图。若这里只有 EmptyView，
+            // 就没有任何"可出现的视图"，onAppear 不会触发，图片永远加载不出来。
+            Color.clear.frame(width: 0, height: 0)
+
             if let image {
                 content(.success(image))
-            } else if url == nil {
-                content(.empty)
             } else {
                 content(.empty)
             }
         }
         .onAppear(perform: load)
         .onChange(of: url?.absoluteString) { _ in
-            image = nil
+            // 故意不清空 image：换背景 URL 时让旧图继续顶着，直到新图就位，
+            // 否则中间会闪一下兜底渐变（用户看到的就是"背景变回默认了"）。
             load()
         }
     }
 
     private func load() {
-        guard let url else { return }
+        guard let url else {
+            image = nil
+            loadingKey = nil
+            return
+        }
+        let key = url.absoluteString
+        loadingKey = key
         if let hit = MediaCache.shared.cachedImage(for: url) {
             image = hit
             return
         }
         MediaCache.shared.image(for: url) { img in
+            // 迟到的旧 URL 结果不要覆盖当前 URL 的图
+            guard loadingKey == key else { return }
             image = img
         }
     }
@@ -304,5 +325,23 @@ struct GIFImageView: UIViewRepresentable {
         // UIImage 若是动图（多帧），UIImageView 会自动播放
         uiView.image = image
         uiView.startAnimating()
+        // 让 UIImageView 不再坚持"我就要图片原始尺寸"，
+        // iOS 15 上没有 sizeThatFits 时也能被父级拉伸铺满
+        uiView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        uiView.setContentHuggingPriority(.defaultLow, for: .vertical)
+        uiView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        uiView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+    }
+
+    /// 必须显式声明尺寸：UIImageView 的固有尺寸就是图片的像素尺寸，
+    /// 不声明的话背景会被按原图大小布局（小图不铺满、大图撑出屏幕），
+    /// `scaleAspectFill` 也就无从发挥。
+    /// 该 API 是 iOS 16 起才有的，部署目标是 15，所以要标注可用性。
+    @available(iOS 16.0, *)
+    func sizeThatFits(_ proposal: ProposedViewSize,
+                      uiView: UIImageView,
+                      context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? UIScreen.main.bounds.width,
+               height: proposal.height ?? UIScreen.main.bounds.height)
     }
 }

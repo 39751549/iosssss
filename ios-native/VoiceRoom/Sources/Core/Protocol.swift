@@ -25,6 +25,15 @@ enum VRConfig {
         guard !host.isEmpty else { return nil }
         return URL(string: "\(scheme)://\(host)")
     }
+
+    /// 把服务端下发的相对路径（如背景图 `/bg/xxx.gif`）解析成绝对 URL。
+    /// 内置主题名（aurora/hearts…）不是路径，返回 nil。
+    static func absoluteURL(for path: String) -> URL? {
+        guard !path.isEmpty else { return nil }
+        if path.hasPrefix("http") { return URL(string: path) }
+        guard path.hasPrefix("/"), let base = baseURL else { return nil }
+        return URL(string: path, relativeTo: base)
+    }
 }
 
 /// 设备标识：一次安装生成一次，之后长期保存。

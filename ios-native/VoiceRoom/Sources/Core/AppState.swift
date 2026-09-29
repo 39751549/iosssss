@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UIKit
 import Combine
 
 /// 全局应用状态：登录态、当前房间、聊天、礼物、音乐
@@ -32,6 +33,16 @@ final class AppState: ObservableObject {
     @Published var messages: [VRChatMessage] = []
     @Published var giftList: [VRGift] = []
     @Published var giftAnimations: [GiftAnimation] = []
+
+    /// 当前房间的背景图（自定义图 / GIF）。
+    ///
+    /// 为什么放在 AppState 而不是让 RoomView 自己用 CachedAsyncImage 加载：
+    /// RoomView 在「离开房间再进来」「切后台回来」时会被重建，视图内的 @State 图片
+    /// 随之清空 —— 重新加载期间只能显示兜底渐变，用户看到的就是「背景变回默认了」，
+    /// 而且每次都要等一遍磁盘/网络，表现为「设置了要等好久才生效」。
+    /// 提到这里之后，整个 App 生命周期只加载一次，进出房间都是瞬时的。
+    @Published var roomBackgroundImage: UIImage?
+    private var roomBackgroundURL: URL?
 
     // MARK: 语音
     @Published var micEnabled = false
@@ -268,6 +279,8 @@ final class AppState: ObservableObject {
             let isFirst = (roomState == nil)
             roomState = st
             giftList = st.giftList
+            // 背景图在 AppState 层维护：URL 没变就复用，变了才重新加载
+            refreshRoomBackground()
             if isFirst {
                 messages = st.chatLog
                 // 进房后与已在房的人建立语音连接
@@ -370,6 +383,9 @@ final class AppState: ObservableObject {
         clientId = ""
         lastRoomId = ""
         micEnabled = false
+        // 背景图故意**不**清空：马上又回同一个房间时可以直接复用，
+        // 不用等重新加载（那一小段空窗就是用户看到的"背景变回默认了"）。
+        // 真的换了房间时，refreshRoomBackground() 会按新的背景路径自动换掉/清掉它。
         MusicPlayer.shared.stop()
     }
 
@@ -437,6 +453,52 @@ final class AppState: ObservableObject {
     func setRoomBackground(_ bg: RoomBackground) {
         guard let st = roomState else { return }
         connection.send(.roomBackground(roomId: st.room.id, background: bg.rawValue))
+        // 乐观更新：内置主题不需要下载，直接换掉本地背景图，
+        // 否则要等服务端快照回包才有变化，用户会觉得"点了没反应"。
+        roomBackgroundURL = nil
+        roomBackgroundImage = nil
+    }
+
+    // MARK: - 房间背景图
+
+    /// 依据当前房间快照刷新背景图（URL 没变就直接复用，不重新解码）
+    private func refreshRoomBackground() {
+        let path = roomState?.effectiveBackground ?? ""
+        guard let url = VRConfig.absoluteURL(for: path) else {
+            // 内置主题（或空）：不用图片，交给兜底渐变
+            roomBackgroundURL = nil
+            roomBackgroundImage = nil
+            return
+        }
+        if roomBackgroundURL == url, roomBackgroundImage != nil { return }
+        loadRoomBackground(url)
+    }
+
+    private func loadRoomBackground(_ url: URL) {
+        // 换的是另一张图 → 先撤掉旧图，别在房间里看到上一个房间的背景
+        if roomBackgroundURL != url { roomBackgroundImage = nil }
+        roomBackgroundURL = url
+        // 内存命中 → 同步拿到，一帧都不会闪
+        if let hit = MediaCache.shared.cachedImage(for: url) {
+            roomBackgroundImage = hit
+            return
+        }
+        // 内存没有 → 走磁盘缓存（快），仍没有才下载
+        MediaCache.shared.image(for: url) { [weak self] img in
+            guard let self, self.roomBackgroundURL == url else { return }
+            self.roomBackgroundImage = img
+        }
+    }
+
+    /// 上传成功时立刻应用（本机已经有这张图了，不必等服务端快照、也不必再下一次）
+    func applyRoomBackground(path: String, image: UIImage?) {
+        guard let url = VRConfig.absoluteURL(for: path) else { return }
+        roomBackgroundURL = url
+        if let image {
+            roomBackgroundImage = image
+        } else {
+            loadRoomBackground(url)
+        }
     }
 
     func updateProfile(name: String, gender: Gender, bio: String, avatar: String) {

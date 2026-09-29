@@ -33,14 +33,6 @@ struct RoomSettingsSheet: View {
         return bg.hasPrefix("/") || bg.hasPrefix("http")
     }
 
-    private var customBgURL: URL? {
-        let bg = state.room.background
-        guard bg.hasPrefix("/") || bg.hasPrefix("http") else { return nil }
-        if bg.hasPrefix("http") { return URL(string: bg) }
-        guard let base = VRConfig.baseURL else { return nil }
-        return URL(string: bg, relativeTo: base)
-    }
-
     var body: some View {
         ZStack {
             VRTheme.bg.ignoresSafeArea()
@@ -167,14 +159,13 @@ struct RoomSettingsSheet: View {
                         }
 
                         // 已设置自定义背景：预览 + 清除
-                        if isCustomBg {
+                        if isCustomBg || app.roomBackgroundImage != nil {
                             HStack(spacing: 10) {
-                                CachedAsyncImage(url: customBgURL) { phase in
-                                    if case .success(let img) = phase {
-                                        Image(uiImage: img)
-                                            .resizable().scaledToFill()
-                                    } else {
-                                        Color(hex: "27436B").opacity(0.08)
+                                ZStack {
+                                    Color(hex: "27436B").opacity(0.08)
+                                    if let img = app.roomBackgroundImage {
+                                        GIFImageView(image: img, contentMode: .scaleAspectFill)
+                                            .frame(width: 54, height: 54)
                                     }
                                 }
                                 .frame(width: 54, height: 54)
@@ -342,11 +333,14 @@ struct RoomSettingsSheet: View {
             isUploadingBg = false
             switch result {
             case .success(let url):
-                // 服务端已自动把这面背景设为我的房间背景并推送快照。
                 // 清掉"点过主题"的标记，防止紧接着点保存时又被内置主题覆盖。
                 themePicked = false
+                // 本机已经有这张图了 → 立刻应用，既不等服务端快照、也不用再下载一次。
+                // （否则用户点完"上传"要盯着默认主题等图片下完，体感就是"设置了半天不生效"。
+                //   GIF 用原始数据解码，保证拿到的是动图而不是首帧。）
+                let preview = raw.flatMap { MediaCache.decode($0) } ?? img
+                app.applyRoomBackground(path: url, image: preview)
                 app.showToast("背景已应用，永久生效 ✨", kind: .success)
-                _ = url
             case .failure(let err):
                 app.showToast("上传失败：\(err.localizedDescription)", kind: .error)
             }

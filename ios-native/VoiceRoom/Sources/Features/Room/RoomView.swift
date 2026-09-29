@@ -17,14 +17,24 @@ struct RoomView: View {
     @State private var showSettings = false
     @State private var showProfile = false
     @State private var cardUser: VRCardTarget?
-    /// 悬浮音乐条位置（可拖动，默认在房主麦位与第一排之间）
-    /// 位置会持久化：用户挪过一次，之后进房都停在原地
+    /// 悬浮音乐条：位置 + 展开/折叠 都会持久化，下次进房原样恢复
     @State private var musicBarOffset: CGSize = .zero
+    /// 拖动过程中的即时位移（松手自动归零）—— 关键：它和 musicBarOffset 分开。
+    /// 以前只用 musicBarOffset 同时充当"已提交位置"和"本次拖动位移"，
+    /// 而 DragGesture.translation 是相对**手指按下点**的，不是相对条的基准位置，
+    /// 于是手指一按下去 translation≈0，条就瞬间跳回默认位置。
+    @GestureState private var musicBarDrag: CGSize = .zero
     @State private var musicBarOffsetRestored = false
-    @State private var musicBarDragging = false
+    /// 展开 = 完整控制条；折叠 = 一个圆图标
+    @State private var musicBarExpanded = true
 
-    private static let musicBarXKey = "vr_music_bar_x"
-    private static let musicBarYKey = "vr_music_bar_y"
+    private static let musicBarXKey = "vr_music_bar2_x"
+    private static let musicBarYKey = "vr_music_bar2_y"
+    private static let musicBarExpandedKey = "vr_music_bar_expanded"
+    /// 折叠状态的直径
+    private static let musicBarIconSize: CGFloat = 46
+    /// 离屏幕边缘的安全距离
+    private static let musicBarMargin: CGFloat = 10
 
     @FocusState private var chatFocused: Bool
 
@@ -48,12 +58,17 @@ struct RoomView: View {
             giftOverlay
         }
         .onAppear {
-            // 只在首次出现时恢复悬浮条位置（之后进房沿用用户挪到的位置）
+            // 只在首次出现时恢复悬浮条的位置与展开状态（之后进房沿用用户当前的选择）
             if !musicBarOffsetRestored {
                 musicBarOffsetRestored = true
-                let x = UserDefaults.standard.double(forKey: Self.musicBarXKey)
-                let y = UserDefaults.standard.double(forKey: Self.musicBarYKey)
-                if x != 0 || y != 0 { musicBarOffset = CGSize(width: x, height: y) }
+                let d = UserDefaults.standard
+                if d.object(forKey: Self.musicBarXKey) != nil || d.object(forKey: Self.musicBarYKey) != nil {
+                    musicBarOffset = CGSize(width: d.double(forKey: Self.musicBarXKey),
+                                            height: d.double(forKey: Self.musicBarYKey))
+                }
+                if d.object(forKey: Self.musicBarExpandedKey) != nil {
+                    musicBarExpanded = d.bool(forKey: Self.musicBarExpandedKey)
+                }
             }
         }
         .sheet(isPresented: $showGift) {
@@ -89,154 +104,217 @@ struct RoomView: View {
 
     // MARK: - 背景
 
-    /// 背景：自定义图/GIF（本地缓存，URL 变化才重新下载）优先，否则用内置主题渐变
+    /// 背景：自定义图/GIF 优先，否则用内置主题渐变。
+    ///
+    /// 图片来自 AppState（app.roomBackgroundImage），不是这里自己异步加载 ——
+    /// 视图在"离开房间再进来 / 切后台回来"时会重建，self 持有的图片状态会丢，
+    /// 于是只能先显示兜底渐变，看起来就像"背景被重置回默认主题"。
+    /// 放到 AppState 之后，URL 不变就永远命中内存缓存，进出房间都是瞬时的。
     private var backgroundLayer: some View {
         ZStack {
-            // 兜底渐变（图片加载中/未设置时可见）
-            LinearGradient(colors: VRTheme.background(for: state.room.background),
+            // 兜底渐变（内置主题 / 图片还没就位时可见）
+            LinearGradient(colors: VRTheme.background(for: state.effectiveBackground),
                            startPoint: .top, endPoint: .bottom)
                 .ignoresSafeArea()
 
-            // 自定义背景（含 GIF 动图）；统一走 MediaCache，按 URL 缓存
-            if let bgURL = absoluteBackgroundURL(state.effectiveBackground) {
-                CachedAsyncImage(url: bgURL) { phase in
-                    switch phase {
-                    case .success(let img):
-                        // 用 UIImageView 承载，GIF 会自动逐帧播放
-                        GIFImageView(image: img, contentMode: .scaleAspectFill)
-                            .ignoresSafeArea()
-                            .transition(.opacity)
-                    default:
-                        EmptyView()
-                    }
-                }
+            // 自定义背景（含 GIF 动图）
+            if let img = app.roomBackgroundImage {
+                GIFImageView(image: img, contentMode: .scaleAspectFill)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .ignoresSafeArea()
             }
 
             // 光晕叠加（轻微，保证文字可读）
-            RadialGradient(colors: VRTheme.glowColors(for: state.room.background),
+            RadialGradient(colors: VRTheme.glowColors(for: state.effectiveBackground),
                            center: .init(x: 0.25, y: 0.08),
                            startRadius: 0, endRadius: 380)
                 .ignoresSafeArea()
                 .opacity(0.55)
         }
-        .animation(.easeInOut(duration: 0.45), value: state.effectiveBackground)
+        .animation(.easeInOut(duration: 0.35), value: app.roomBackgroundImage != nil)
+        .animation(.easeInOut(duration: 0.35), value: state.effectiveBackground)
     }
 
-    /// 背景相对路径 → 绝对 URL（/bg/xxx.gif → http://host/bg/xxx.gif）
-    private func absoluteBackgroundURL(_ s: String) -> URL? {
-        guard !s.isEmpty else { return nil }
-        // 内置主题名（aurora/hearts）不是 URL，跳过
-        if !s.hasPrefix("/") && !s.hasPrefix("http") { return nil }
-        if s.hasPrefix("http") { return URL(string: s) }
-        guard let base = VRConfig.baseURL else { return nil }
-        return URL(string: s, relativeTo: base)
-    }
-
-    // MARK: - 悬浮音乐条（房主麦位与第一排之间，可拖动）
+    // MARK: - 悬浮音乐条（可拖动 / 可折叠成图标；默认贴右边缘）
 
     @ViewBuilder
     private var floatingMusicBar: some View {
         if let song = state.currentSong {
             GeometryReader { geo in
-                let baseY = geo.size.height * 0.30
-                HStack(spacing: 9) {
-                    // 播放/暂停
-                    Button {
-                        app.musicControl(state.playing ? "pause" : "play")
-                    } label: {
-                        Text(state.playing ? "⏸" : "▶️")
-                            .font(.system(size: 15))
-                            .frame(width: 32, height: 32)
-                    }
-                    .buttonStyle(.plain)
+                let margin = Self.musicBarMargin
+                let barW = musicBarWidth(in: geo.size)
+                // 基准点 = 贴右边缘的位置；musicBarOffset 是在它基础上的位移
+                let baseX = geo.size.width - barW / 2 - margin
+                let baseY = Self.musicBarBaseY(in: geo.size)
+                // 兜底约束：无论展开还是折叠，都保证整条在屏幕内
+                let committed = clampMusicBar(musicBarOffset, barW: barW, in: geo.size)
+                let live = CGSize(width: committed.width + musicBarDrag.width,
+                                  height: committed.height + musicBarDrag.height)
 
-                    // 歌名 + 进度 + 倒计时
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(song.title)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(VRTheme.text)
-                            .lineLimit(1)
-
-                        HStack(spacing: 6) {
-                            GeometryReader { g in
-                                ZStack(alignment: .leading) {
-                                    Capsule().fill(Color(hex: "27436B").opacity(0.16))
-                                    Capsule()
-                                        .fill(VRTheme.brandGradient)
-                                        .frame(width: max(1.5, g.size.width * player.progressFraction))
+                musicBarBody(song: song, width: barW)
+                    .scaleEffect(musicBarDrag != .zero ? 1.04 : 1)
+                    .position(x: baseX + live.width, y: baseY + live.height)
+                    .gesture(
+                        DragGesture(minimumDistance: 6)
+                            .updating($musicBarDrag) { value, st, _ in st = value.translation }
+                            .onEnded { value in
+                                var o = CGSize(width: committed.width + value.translation.width,
+                                               height: committed.height + value.translation.height)
+                                // 松手吸附到最近的左右边缘（"贴紧"）
+                                let centerX = baseX + o.width
+                                let halfW = barW / 2
+                                o.width = (centerX < geo.size.width / 2
+                                           ? (margin + halfW)
+                                           : (geo.size.width - margin - halfW)) - baseX
+                                o = clampMusicBar(o, barW: barW, in: geo.size)
+                                withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
+                                    musicBarOffset = o
                                 }
+                                let d = UserDefaults.standard
+                                d.set(o.width, forKey: Self.musicBarXKey)
+                                d.set(o.height, forKey: Self.musicBarYKey)
                             }
-                            .frame(height: 3)
-
-                            Text("\(player.positionText)/\(player.durationText)")
-                                .font(.system(size: 9, weight: .medium, design: .monospaced))
-                                .foregroundColor(VRTheme.textMute)
-                                .fixedSize()
-                        }
-                    }
-
-                    // 播放模式
-                    Button {
-                        app.cyclePlayMode()
-                    } label: {
-                        Text(state.mode.icon).font(.system(size: 14))
-                            .frame(width: 28, height: 32)
-                    }
-                    .buttonStyle(.plain)
-
-                    // 拖动手柄
-                    Image(systemName: "line.3.horizontal")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(VRTheme.textMute)
-                        .frame(width: 22, height: 32)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .frame(width: min(geo.size.width - 28, 340))
-                .background(
-                    RoundedRectangle(cornerRadius: 15, style: .continuous)
-                        .fill(.ultraThinMaterial)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 15, style: .continuous)
-                                .fill(Color.white.opacity(0.55))
-                        )
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 15, style: .continuous)
-                        .strokeBorder(VRTheme.brand.opacity(0.35), lineWidth: 1)
-                )
-                .shadow(color: VRTheme.text.opacity(0.14), radius: 10, y: 4)
-                .scaleEffect(musicBarDragging ? 1.04 : 1)
-                .position(x: geo.size.width / 2 + musicBarOffset.width,
-                          y: baseY + musicBarOffset.height)
-                .gesture(
-                    DragGesture()
-                        .onChanged { g in
-                            musicBarDragging = true
-                            musicBarOffset = g.translation
-                        }
-                        .onEnded { _ in
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                                musicBarDragging = false
-                                // 限制在屏幕内
-                                let halfW = min(geo.size.width - 28, 340) / 2
-                                let maxDX = geo.size.width / 2 - halfW - 6
-                                musicBarOffset.width = min(max(musicBarOffset.width, -maxDX), maxDX)
-                                musicBarOffset.height = min(max(musicBarOffset.height, -geo.size.height * 0.24),
-                                                            geo.size.height * 0.42)
-                                // 记住位置，下次进房不用再挪
-                                UserDefaults.standard.set(musicBarOffset.width, forKey: Self.musicBarXKey)
-                                UserDefaults.standard.set(musicBarOffset.height, forKey: Self.musicBarYKey)
-                            }
-                        }
-                )
-                .onTapGesture {
-                    showMusic = true
-                }
+                    )
             }
-            .allowsHitTesting(true)
             .zIndex(20)
         }
+    }
+
+    /// 展开时收窄（不占满整屏），折叠时是个圆
+    private func musicBarWidth(in size: CGSize) -> CGFloat {
+        guard musicBarExpanded else { return Self.musicBarIconSize }
+        return min(max(size.width - 104, 172), 236)
+    }
+
+    /// 悬浮条默认高度位置（房主麦位下沿附近）
+    private static func musicBarBaseY(in size: CGSize) -> CGFloat {
+        size.height * 0.34
+    }
+
+    /// 把悬浮条约束在屏幕内。
+    /// 注意基准点是"贴右边缘"，所以位移通常是 0 或负数（往左拖）。
+    private func clampMusicBar(_ o: CGSize, barW: CGFloat, in size: CGSize) -> CGSize {
+        let margin = Self.musicBarMargin
+        let baseX = size.width - barW / 2 - margin
+        let baseY = Self.musicBarBaseY(in: size)
+        let half = barW / 2
+        // 水平：整条不越出左右边界
+        var minDX = margin + half - baseX
+        var maxDX = size.width - margin - half - baseX
+        if minDX > maxDX { swap(&minDX, &maxDX) }
+        // 垂直：上方躲开顶栏，下方躲开底部工具栏
+        var minDY = 56 + Self.musicBarIconSize / 2 - baseY
+        var maxDY = size.height - 96 - Self.musicBarIconSize / 2 - baseY
+        if minDY > maxDY { swap(&minDY, &maxDY) }
+        return CGSize(width: min(max(o.width, minDX), maxDX),
+                      height: min(max(o.height, minDY), maxDY))
+    }
+
+    @ViewBuilder
+    private func musicBarBody(song: VRSong, width: CGFloat) -> some View {
+        if musicBarExpanded {
+            expandedMusicBar(song: song, width: width)
+        } else {
+            collapsedMusicBar(width: width)
+        }
+    }
+
+    /// 展开形态：播放/暂停 · 歌名+进度+倒计时 · 播放模式 · 收起
+    private func expandedMusicBar(song: VRSong, width: CGFloat) -> some View {
+        HStack(spacing: 8) {
+            Button {
+                app.musicControl(state.playing ? "pause" : "play")
+            } label: {
+                Text(state.playing ? "⏸" : "▶️")
+                    .font(.system(size: 15))
+                    .frame(width: 30, height: 30)
+            }
+            .buttonStyle(.plain)
+
+            // 点这里 → 打开完整歌单（"显示全部"）
+            Button {
+                showMusic = true
+            } label: {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(song.title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(VRTheme.text)
+                        .lineLimit(1)
+
+                    HStack(spacing: 6) {
+                        GeometryReader { g in
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(Color(hex: "27436B").opacity(0.16))
+                                Capsule()
+                                    .fill(VRTheme.brandGradient)
+                                    .frame(width: max(1.5, g.size.width * player.progressFraction))
+                            }
+                        }
+                        .frame(height: 3)
+
+                        Text("\(player.positionText)/\(player.durationText)")
+                            .font(.system(size: 9, weight: .medium, design: .monospaced))
+                            .foregroundColor(VRTheme.textMute)
+                            .fixedSize()
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            // 播放模式
+            Button {
+                app.cyclePlayMode()
+            } label: {
+                Text(state.mode.icon)
+                    .font(.system(size: 14))
+                    .frame(width: 26, height: 30)
+            }
+            .buttonStyle(.plain)
+
+            // 收起成一个圆图标
+            Button {
+                setMusicBarExpanded(false)
+            } label: {
+                Text("⌄")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundColor(VRTheme.textMute)
+                    .frame(width: 24, height: 30)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .frame(width: width)
+        .musicBarChrome(corner: 15)
+    }
+
+    /// 折叠形态：一个圆图标（带环形进度），点一下展开
+    private func collapsedMusicBar(width: CGFloat) -> some View {
+        ZStack {
+            Circle().fill(.ultraThinMaterial)
+            Circle().fill(Color.white.opacity(0.5))
+            Text(state.playing ? "⏸" : "🎵")
+                .font(.system(size: 17))
+            // 环形进度：一眼看到放到哪了
+            Circle()
+                .trim(from: 0, to: max(0.001, min(1, player.progressFraction)))
+                .stroke(VRTheme.brand, style: StrokeStyle(lineWidth: 2.4, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .padding(2.5)
+        }
+        .frame(width: width, height: width)
+        .overlay(Circle().strokeBorder(VRTheme.brand.opacity(0.35), lineWidth: 1))
+        .shadow(color: VRTheme.text.opacity(0.16), radius: 9, y: 3)
+        .contentShape(Circle())
+        .onTapGesture { setMusicBarExpanded(true) }
+    }
+
+    private func setMusicBarExpanded(_ expanded: Bool) {
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.8)) {
+            musicBarExpanded = expanded
+        }
+        UserDefaults.standard.set(expanded, forKey: Self.musicBarExpandedKey)
     }
 
     @ObservedObject private var player = MusicPlayer.shared
@@ -868,4 +946,26 @@ struct GiftFlyingView: View {
 struct VRCardTarget: Identifiable {
     let member: VRMember
     var id: String { member.clientId }
+}
+
+// MARK: - 悬浮音乐条的玻璃外壳（展开态用）
+
+private extension View {
+    /// 半透明毛玻璃 + 细描边 + 轻投影，保证在任何背景上都看得清
+    func musicBarChrome(corner: CGFloat) -> some View {
+        self
+            .background(
+                RoundedRectangle(cornerRadius: corner, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: corner, style: .continuous)
+                            .fill(Color.white.opacity(0.55))
+                    )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: corner, style: .continuous)
+                    .strokeBorder(VRTheme.brand.opacity(0.35), lineWidth: 1)
+            )
+            .shadow(color: VRTheme.text.opacity(0.14), radius: 10, y: 4)
+    }
 }
