@@ -27,3 +27,6 @@ data-test-local/
 # 本地免重装测试环境（临时数据，不进仓库）
 devtest/.data/
 devtest/.data-*/
+
+# 真机验证脚本产出的截图（不入库）
+devtest/admin_verify*.png
