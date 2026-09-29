@@ -884,6 +884,12 @@ wss.on('connection', (ws) => {
   ws.on('pong', () => { ws.isAlive = true; });
   const reply = (m) => { if (ws.readyState === 1) ws.send(JSON.stringify(m)); };
 
+  // 立刻回一帧 hello。
+  // 客户端把「收到第一帧」当作链路已就绪的信号，进而触发自动登录；
+  // 如果这里不说话，客户端会一直停在 connecting 状态、永远不发起 auth
+  // （表现就是：每次重开 App 都要手动登录）。
+  reply({ type: 'hello', data: { server: 'voice-room', ts: Date.now() } });
+
   ws.on('message', async (buf) => {
     let msg;
     try { msg = JSON.parse(buf.toString()); } catch { return reply({ type: 'error', msg: '消息格式错误' }); }

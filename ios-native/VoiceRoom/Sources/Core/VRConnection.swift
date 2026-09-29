@@ -45,6 +45,25 @@ final class VRConnection: ObservableObject {
         t.resume()
         receiveLoop()
         startPing()
+
+        // URLSessionWebSocketTask 没有「已打开」回调。
+        // 只靠「收到第一帧」判定连接成功是不可靠的：服务端如果建连后不说话，
+        // status 会永远停在 .connecting，上层「连上就自动登录」的逻辑就永远不触发
+        // （表现就是每次重开 App 都要手动登录）。
+        // 这里再补一个探测：ping 能正常往返即认为链路可用。
+        t.sendPing { [weak self] err in
+            Task { @MainActor in
+                guard let self, self.task === t else { return }   // 已被更新的连接替换
+                if err == nil { self.markConnected() }
+            }
+        }
+    }
+
+    /// 标记链路已就绪（幂等）
+    private func markConnected() {
+        if case .connected = status { return }
+        status = .connected
+        reconnectAttempt = 0
     }
 
     func disconnect() {
@@ -98,9 +117,8 @@ final class VRConnection: ObservableObject {
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return }
 
-        // 首帧成功即认为已连接
-        if case .connecting = status { status = .connected }
-        reconnectAttempt = 0
+        // 首帧成功同样视为已连接（与 connect() 里的 ping 探测互为兜底）
+        markConnected()
 
         let parsed = VRServerMessage.parse(json)
         onMessage?(parsed)

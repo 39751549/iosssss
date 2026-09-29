@@ -81,11 +81,9 @@ final class AppState: ObservableObject {
             .sink { [weak self] st in
                 guard let self else { return }
                 guard case .connected = st else { return }
+                // 链路就绪 → 用已保存的凭据静默登录。
+                // 这就是「只要不卸载就永远不会掉线」的关键一步。
                 self.silentAuth()
-                // 重连后若之前在房间里，自动回到房间
-                if self.isLoggedIn, self.inRoom, !self.lastRoomId.isEmpty {
-                    self.connection.send(.roomJoin(userId: self.userId, roomId: self.lastRoomId, no: nil))
-                }
             }
             .store(in: &cancellables)
     }
@@ -157,6 +155,12 @@ final class AppState: ObservableObject {
             LocalStore.saveUser(user)
             requestRoomList()
             requestMyRoom()
+            // 断线重连后自动回到原来所在的房间。
+            // 放在 authOK 里而不是 status 回调里：这样能保证服务端已认得这个身份，
+            // 也保证 join 一定排在 auth 之后（顺序有保证，不用赌时序）。
+            if inRoom, !lastRoomId.isEmpty {
+                connection.send(.roomJoin(userId: uid, roomId: lastRoomId, no: nil))
+            }
 
         case let .profileOK(user):
             me = user
