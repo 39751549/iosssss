@@ -93,6 +93,8 @@ enum VRClientMessage {
     case roomDestroy(userId: String, roomId: String)
     case roomJoin(userId: String, roomId: String?, no: String?)
     case roomLeave
+    /// 主动拉一次房间快照（设置背景/换麦序/回前台后让界面立刻跟上，不必退出重进）
+    case roomSync
     case roomRename(roomId: String, userId: String, name: String)
     case roomBackground(roomId: String, background: String)
     case seatChange(seat: Int)
@@ -151,6 +153,9 @@ enum VRClientMessage {
 
         case .roomLeave:
             return ["type": "room:leave"]
+
+        case .roomSync:
+            return ["type": "room:sync"]
 
         case let .roomRename(roomId, userId, name):
             return ["type": "room:rename", "roomId": roomId, "userId": userId, "name": name]

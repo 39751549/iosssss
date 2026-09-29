@@ -56,6 +56,8 @@ struct VRAvatarFull: View {
     var size: CGFloat = 40
 
     @State private var image: UIImage?
+    /// 当前这次加载对应的头像 URL；回调到达时校验，丢弃过期结果
+    @State private var loadingKey: String?
 
     var body: some View {
         Group {
@@ -76,27 +78,43 @@ struct VRAvatarFull: View {
         .onAppear(perform: loadIfNeeded)
         .onChange(of: user?.avatar) { _ in
             image = nil
+            loadingKey = nil
+            loadIfNeeded()
+        }
+        // 换人了（列表复用、麦位换人）也要重载：
+        // 只看 avatar 字符串不够 —— 两个人可能都还是"没设头像"的空串，
+        // 那样视图被复用时会继续显示上一个人的图。
+        .onChange(of: user?.id) { _ in
+            image = nil
+            loadingKey = nil
             loadIfNeeded()
         }
     }
 
     private func loadIfNeeded() {
-        guard let s = user?.avatar, !s.isEmpty else { return }
+        guard let s = user?.avatar, !s.isEmpty else {
+            image = nil
+            return
+        }
 
         // 1) dataURL（历史上传的老数据 / 本地预览）
         if s.hasPrefix("data:image"), let range = s.range(of: "base64,") {
             let b64 = String(s[range.upperBound...])
-            if let data = Data(base64Encoded: b64) { image = MediaCache.decode(data) }
+            if let data = Data(base64Encoded: b64) { image = MediaCache.decode(data, profile: .avatar) }
             return
         }
 
         // 2) 服务端文件地址（/avatar/xxx.png）；走 MediaCache：URL 不变就不重复下载
         guard let url = absoluteAvatarURL(s) else { return }
-        if let hit = MediaCache.shared.cachedImage(for: url) {
+        // 记下这次加载的目标，回调里用来丢弃过期结果
+        loadingKey = url.absoluteString
+        if let hit = MediaCache.shared.cachedImage(for: url, profile: .avatar) {
             image = hit
             return
         }
-        MediaCache.shared.image(for: url) { img in
+        MediaCache.shared.image(for: url, profile: .avatar) { [self] img in
+            // 头像换了 / 视图被复用给了别人时，迟到的旧图不能覆盖新图
+            guard loadingKey == url.absoluteString else { return }
             image = img
         }
     }

@@ -78,12 +78,9 @@ struct RoomView: View {
             MusicSheet(state: state).environmentObject(app)
         }
         .sheet(isPresented: $showMembers) {
-            MemberSheet(state: state, onOpenCard: { m in
-                showMembers = false
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                    cardUser = VRCardTarget(member: m)
-                }
-            }).environmentObject(app)
+            // 名片由成员列表自己弹（嵌套 sheet），这里不再"收起列表再弹名片"——
+            // 那种写法会让 iOS 的两个 sheet 互相打架，表现为名片无限打开又关闭
+            MemberSheet(state: state).environmentObject(app)
         }
         .sheet(isPresented: $showSettings) {
             RoomSettingsSheet(state: state).environmentObject(app)
@@ -442,12 +439,25 @@ struct RoomView: View {
         return app.speakingIds.contains(m.clientId)
     }
 
+    /// 打开某人名片。
+    ///
+    /// 两个要点：
+    /// 1. **已经打开同一张名片就不重复赋值** —— 同一个触摸同时触发 Button 的动作和长按回调时，
+    ///    重复赋值会让 sheet 重新走一遍 present/dismiss，看起来就是名片在闪。
+    /// 2. 身份取 userId（见 VRCardTarget），同一账号的重复成员记录映射到同一张名片，
+    ///    不会因为 clientId 抖动而把名片重开一遍。
+    private func openCard(_ m: VRMember) {
+        let t = VRCardTarget(member: m)
+        guard cardUser?.id != t.id else { return }
+        cardUser = t
+    }
+
     /// 点头像 → 弹名片（不再下麦）；长按自己的麦位 → 下麦
     private func handleSeatTap(_ seat: Int) {
         // 0 号位是房主专位：非房主不能上；有人时一律看名片
         if seat == 0 {
             if let m = state.member(atSeat: 0) {
-                cardUser = VRCardTarget(member: m)          // 包括自己 → 看名片
+                openCard(m)                                 // 包括自己 → 看名片
             } else if app.isHost {
                 app.takeSeat(0)                             // 空着且我是房主 → 上主位
             } else {
@@ -457,7 +467,7 @@ struct RoomView: View {
         }
         // 有人（含自己）→ 一律看名片
         if let m = state.member(atSeat: seat) {
-            cardUser = VRCardTarget(member: m)
+            openCard(m)
             return
         }
         // 空位 → 上麦
@@ -473,7 +483,7 @@ struct RoomView: View {
             app.takeSeat(-1)
             app.showToast("已下麦")
         } else {
-            cardUser = VRCardTarget(member: m)
+            openCard(m)
         }
     }
 
@@ -487,13 +497,13 @@ struct RoomView: View {
                         ChatRow(message: m) {
                             if let cid = m.userId,
                                let member = state.members.first(where: { $0.user.id == cid }) {
-                                cardUser = VRCardTarget(member: member)
+                                openCard(member)
                             } else if let cid = m.userId,
                                       cid == app.userId, let me = app.me {
-                                cardUser = VRCardTarget(
-                                    member: VRMember(clientId: app.clientId, user: me,
-                                                     seat: app.myMember?.seat ?? -1,
-                                                     muted: false, joinedAt: 0)
+                                openCard(
+                                    VRMember(clientId: app.clientId, user: me,
+                                             seat: app.myMember?.seat ?? -1,
+                                             muted: false, joinedAt: 0)
                                 )
                             }
                         }
@@ -524,13 +534,20 @@ struct RoomView: View {
 
     private var bottomBar: some View {
         HStack(spacing: 8) {
-            // 左下角：扬声器（前）+ 麦克风（后），半透明图标
+            // 左下角：扬声器（前）+ 麦克风（后）
+            //
+            // 这里刻意用 SF Symbol 而不是 emoji：emoji 里「静音」只有 🔇（一个划掉的喇叭），
+            // 麦克风关掉时显示 🔇 的话，两个按钮就长得一模一样，用户根本分不清哪个是哪个。
+            // SF Symbol 有 mic.slash 这种明确的「麦克风静音」，语义一眼可辨。
             HStack(spacing: 6) {
-                barIcon(app.speakerEnabled ? "🔊" : "🔇",
-                        tint: app.speakerEnabled ? VRTheme.brand : nil) {
+                barIcon(app.speakerEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill",
+                        tint: app.speakerEnabled ? VRTheme.brand : nil,
+                        symbol: true) {
                     app.toggleSpeaker()
                 }
-                barIcon(micIcon, tint: app.micEnabled ? VRTheme.green : nil) {
+                barIcon(app.micEnabled ? "mic.fill" : "mic.slash.fill",
+                        tint: app.micEnabled ? VRTheme.green : nil,
+                        symbol: true) {
                     app.toggleMic()
                 }
             }
@@ -581,25 +598,33 @@ struct RoomView: View {
         .padding(.bottom, max(8, safeBottom))
     }
 
-    private var micIcon: String {
-        if !app.micEnabled { return "🔇" }
-        return "🎤"
-    }
-
     /// 底部栏图标：统一半透明玻璃底 + 白边，禁止不透明块状背景
-    private func barIcon(_ icon: String, tint: Color? = nil, action: @escaping () -> Void) -> some View {
+    /// - Parameters:
+    ///   - icon: emoji 文本，或 `symbol: true` 时的 SF Symbol 名
+    ///   - symbol: 用 SF Symbol 渲染（音频开关这类"开/关"图标必须用它，emoji 没有对应的静音麦）
+    private func barIcon(_ icon: String, tint: Color? = nil,
+                         symbol: Bool = false,
+                         action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(icon)
-                .font(.system(size: 17))
-                .frame(width: 44, height: 44)
-                .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(tint?.opacity(0.30) ?? Color.black.opacity(0.26))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .strokeBorder(tint?.opacity(0.85) ?? Color.white.opacity(0.32), lineWidth: 1.2)
-                )
+            Group {
+                if symbol {
+                    Image(systemName: icon)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(tint ?? .white)
+                } else {
+                    Text(icon)
+                        .font(.system(size: 17))
+                }
+            }
+            .frame(width: 44, height: 44)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(tint?.opacity(0.30) ?? Color.black.opacity(0.26))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(tint?.opacity(0.85) ?? Color.white.opacity(0.32), lineWidth: 1.2)
+            )
         }
         .buttonStyle(.plain)
     }
@@ -958,7 +983,11 @@ struct GiftFlyingView: View {
 
 struct VRCardTarget: Identifiable {
     let member: VRMember
-    var id: String { member.clientId }
+    /// 用 userId 而不是 clientId 作身份：
+    /// 同一个账号可能因为残留连接在一份快照里出现两条记录（clientId 不同），
+    /// 拿 clientId 当身份会让"同一张名片"被当成两张，反复 present/dismiss 闪屏。
+    /// userId 是稳定的，重复记录自然收敛到同一张名片。
+    var id: String { member.user.id.isEmpty ? member.clientId : member.user.id }
 }
 
 // MARK: - 悬浮音乐条的玻璃外壳（展开态用）

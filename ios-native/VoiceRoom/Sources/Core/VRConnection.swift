@@ -177,9 +177,15 @@ final class VRConnection: ObservableObject {
 
     // MARK: - 心跳（保活，防止中间层断开空闲连接）
 
+    /// 心跳间隔。
+    /// 服务端已经每 30 秒 ping 一次（WS 控制帧，几乎不耗电），客户端再补一次是为了
+    /// 20 秒内发现"链路已经死了但系统还没回调"。太密只会白白唤醒射频模块（耗电），
+    /// 对齐到 30 秒即可，发现断线最多晚 10 秒，但省掉三分之一的无效唤醒。
+    private static let pingInterval: TimeInterval = 30
+
     private func startPing(for t: URLSessionWebSocketTask) {
         stopPing()
-        pingTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { _ in
+        pingTimer = Timer.scheduledTimer(withTimeInterval: Self.pingInterval, repeats: true) { _ in
             t.sendPing { [weak self] err in
                 guard let self = self, err != nil else { return }
                 Task { @MainActor in

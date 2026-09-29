@@ -226,6 +226,9 @@ struct RoomSettingsSheet: View {
                         if themePicked, background.rawValue != state.room.background {
                             app.setRoomBackground(background)
                         }
+                        // 改完主动拉一次快照：房间名/背景立刻反映到房间里，
+                        // 不用等被动推送（以前表现为"必须退出房间重进才生效"）
+                        app.requestRoomSync()
                         app.showToast("房间设置已保存", kind: .success)
                         dismiss()
                     }
@@ -299,6 +302,11 @@ struct RoomSettingsSheet: View {
             roomName = state.room.name
             background = RoomBackground(safeRaw: state.room.background)
         }
+        .onDisappear {
+            // 面板关掉（保存 / ✕ / 下滑）都补拉一次快照：
+            // 保证回到房间时背景、房间名、成员都是最新的，不必退出房间重进
+            app.requestRoomSync()
+        }
     }
 
     /// 上传房间自定义背景（支持 GIF 动图；服务端存文件，永久生效）
@@ -336,10 +344,21 @@ struct RoomSettingsSheet: View {
                 // 清掉"点过主题"的标记，防止紧接着点保存时又被内置主题覆盖。
                 themePicked = false
                 // 本机已经有这张图了 → 立刻应用，既不等服务端快照、也不用再下载一次。
-                // （否则用户点完"上传"要盯着默认主题等图片下完，体感就是"设置了半天不生效"。
-                //   GIF 用原始数据解码，保证拿到的是动图而不是首帧。）
-                let preview = raw.flatMap { MediaCache.decode($0) } ?? img
-                app.applyRoomBackground(path: url, image: preview)
+                // （否则用户点完"上传"要盯着默认主题等图片下完，体感就是"设置了半天不生效"。）
+                // GIF 用原始数据解码（ImageIO）才能拿到动图而不是首帧；
+                // 解码放到后台线程：4MB / 50 帧的 GIF 在主线程解会明显卡住界面。
+                if let raw {
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        let preview = MediaCache.decode(raw, profile: .background) ?? img
+                        DispatchQueue.main.async {
+                            app.applyRoomBackground(path: url, image: preview)
+                            app.requestRoomSync()
+                        }
+                    }
+                } else {
+                    app.applyRoomBackground(path: url, image: img)
+                    app.requestRoomSync()
+                }
                 app.showToast("背景已应用，永久生效 ✨", kind: .success)
             case .failure(let err):
                 app.showToast("上传失败：\(err.localizedDescription)", kind: .error)

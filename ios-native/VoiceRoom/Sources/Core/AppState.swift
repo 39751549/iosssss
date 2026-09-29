@@ -68,6 +68,10 @@ final class AppState: ObservableObject {
     /// 当前我是不是房主
     var isHost: Bool {
         guard let st = roomState else { return false }
+        // 优先用房间快照里的 ownerId 判断：它由服务端持久化，不会漂。
+        // 之前只看 hostClientId，而 hostClientId 是按"0 号位坐的是谁"推出来的，
+        // 一旦 0 号位出现残留记录就可能推错人 —— 房主会莫名其妙丢掉管理权限。
+        if !st.room.ownerId.isEmpty { return st.room.ownerId == userId }
         return st.hostClientId == clientId
     }
 
@@ -144,6 +148,9 @@ final class AppState: ObservableObject {
         if connection.isConnected {
             // 链路还在，但登录态丢了（例如刚被顶下线过）→ 补一次静默登录
             if !isLoggedIn { silentAuth() }
+            // 切后台期间房间可能已经变了（有人进出、背景被改）→ 回前台拉一次最新快照。
+            // 以前要退出房间重进才能看到变化。
+            requestRoomSync()
         } else {
             connection.reconnectNow()
         }
@@ -275,7 +282,8 @@ final class AppState: ObservableObject {
         case let .joinFail(msg):
             showToast(msg, kind: .error)
 
-        case let .roomState(st):
+        case let .roomState(raw):
+            let st = sanitize(raw)
             let isFirst = (roomState == nil)
             roomState = st
             giftList = st.giftList
@@ -366,11 +374,25 @@ final class AppState: ObservableObject {
     }
 
     func joinRoom(id: String) {
+        leaveIfSwitching(to: id)
         connection.send(.roomJoin(userId: userId, roomId: id, no: nil))
     }
 
     func joinRoom(no: String) {
+        // 用房间号进房比不了 id，只要在房间里就先退（退完再进，语义正确且不会留下幽灵）
+        if inRoom { leaveRoom() }
         connection.send(.roomJoin(userId: userId, roomId: nil, no: no))
+    }
+
+    /// 换房前先退掉当前房间。
+    ///
+    /// 以前是直接 join，旧的成员记录会留在原房间变成"幽灵"：同一个人出现两条记录
+    /// （界面上就是"房间里有两个我"），而且服务端会把 peer:new 发给这条连接自己。
+    /// 服务端现在也会兜底清理，但客户端先退房才是正确的时序：原房间能收到"离开了房间"，
+    /// 麦位也能及时腾出来。
+    private func leaveIfSwitching(to roomId: String) {
+        guard inRoom, roomState?.room.id != roomId else { return }
+        leaveRoom()
     }
 
     func leaveRoom() {
@@ -394,6 +416,50 @@ final class AppState: ObservableObject {
     func takeSeat(_ seat: Int) {
         connection.send(.seatChange(seat: seat))
         if seat >= 0 { enableMic() }
+        // 换麦序顺手拉一次快照：座位变了房间状态就该立刻刷新
+        // （房间背景这类"看起来没生效"的东西也一起跟着刷新，不用退出重进）
+        requestRoomSync()
+    }
+
+    /// 主动向服务端要一次最新的房间快照。
+    /// 什么时候用：设置房间背景 / 换麦位 / 回前台 / 关掉设置面板之后 ——
+    /// 这些场景以前只能靠"退出房间再进来"触发一次完整快照。
+    func requestRoomSync() {
+        guard inRoom, !lastRoomId.isEmpty else { return }
+        connection.send(.roomSync)
+    }
+
+    // MARK: - 房间快照清洗
+
+    /// 同一账号只保留一条成员记录，并按结果重建麦位表。
+    ///
+    /// 残留连接（换房不先退房、断线后又一次 join）会让同一个人出现两条成员记录，
+    /// 界面上就是「房间里有两个我」：人数 +1、麦位被自己占两个，
+    /// 点麦位还会因为两条记录来回切而反复弹名片。
+    /// 服务端已经会摘掉这类幽灵，这里再做一层兜底，保证界面永远只看到一个我。
+    private func sanitize(_ st: VRRoomState) -> VRRoomState {
+        var s = st
+        // 优先保留"我自己的 clientId"那条，其次保留加入时间最新的
+        var best: [String: VRMember] = [:]
+        var order: [String] = []
+        for m in st.members {
+            let key = m.user.id.isEmpty ? m.clientId : m.user.id
+            guard let cur = best[key] else {
+                best[key] = m; order.append(key); continue
+            }
+            if m.clientId == clientId, cur.clientId != clientId {
+                best[key] = m
+            } else if cur.clientId != clientId, m.joinedAt > cur.joinedAt {
+                best[key] = m
+            }
+        }
+        s.members = order.compactMap { best[$0] }
+        // seats 表也照清洗后的成员重建，避免指向已经不存在的 clientId
+        let seatCount = max(9, s.seats.count)
+        var seats = [String?](repeating: nil, count: seatCount)
+        for m in s.members where m.seat >= 0 && m.seat < seatCount { seats[m.seat] = m.clientId }
+        s.seats = seats
+        return s
     }
 
     func toggleMic() {
@@ -457,6 +523,11 @@ final class AppState: ObservableObject {
         // 否则要等服务端快照回包才有变化，用户会觉得"点了没反应"。
         roomBackgroundURL = nil
         roomBackgroundImage = nil
+        // 同步把房间状态里的 background 也改掉 —— 渐变是照 state.room.background 画的，
+        // 只清图片不改这里的话，画面要等下一次快照才变（表现为"必须退出重进才生效"）。
+        roomState?.room.background = bg.rawValue
+        // 再拉一次快照兜底，保证和其他端一致
+        requestRoomSync()
     }
 
     // MARK: - 房间背景图
@@ -479,12 +550,14 @@ final class AppState: ObservableObject {
         if roomBackgroundURL != url { roomBackgroundImage = nil }
         roomBackgroundURL = url
         // 内存命中 → 同步拿到，一帧都不会闪
-        if let hit = MediaCache.shared.cachedImage(for: url) {
+        if let hit = MediaCache.shared.cachedImage(for: url, profile: .background) {
             roomBackgroundImage = hit
             return
         }
-        // 内存没有 → 走磁盘缓存（快），仍没有才下载
-        MediaCache.shared.image(for: url) { [weak self] img in
+        // 内存没有 → 走磁盘缓存（快），仍没有才下载。
+        // 按 background 档位解码：服务端上的背景 GIF 常有 4MB、50 帧，
+        // 按原尺寸全帧解码一张就是 40MB+，会直接触发内存警告把缓存清空。
+        MediaCache.shared.image(for: url, profile: .background) { [weak self] img in
             guard let self, self.roomBackgroundURL == url else { return }
             self.roomBackgroundImage = img
         }
@@ -494,6 +567,9 @@ final class AppState: ObservableObject {
     func applyRoomBackground(path: String, image: UIImage?) {
         guard let url = VRConfig.absoluteURL(for: path) else { return }
         roomBackgroundURL = url
+        // 房间状态一并改掉：这样紧接着到达的快照就算不含这个字段，
+        // 界面也已经是对的（以前要退出重进才看到）
+        roomState?.room.background = path
         if let image {
             roomBackgroundImage = image
         } else {

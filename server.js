@@ -849,6 +849,44 @@ function leaveRoom(clientId, roomId) {
   else pushSnapshot(roomId);
 }
 
+/**
+ * 把一条连接从它残留的所有房间里摘干净。
+ *
+ * 为什么需要：客户端从大厅点另一个房间时是**直接 room:join**、不会先发 room:leave
+ * （LobbyView 的每个房间入口都是这么调的）。于是原来的成员记录以"幽灵"形式留在旧房间 ——
+ * 同一个 userId 两条成员记录、而且两条共用同一条 socket。后果：
+ *   1. 回到原房间时界面上出现「2 个我」（成员数 +1、麦位被占住）；
+ *   2. 服务端会把 peer:new 发给这条连接自己（幽灵的 clientId），
+ *      客户端于是"跟自己建立语音连接"，信令自我回环。
+ * 所以进房前必须先把这条 ws 的旧身份清掉。
+ */
+function detachWsFromRooms(ws) {
+  let removed = 0;
+  for (const [roomId, rt] of [...runtime]) {
+    const stale = [...rt.members.values()].filter(m => m.ws === ws);
+    for (const m of stale) { leaveRoom(m.clientId, roomId); removed++; }
+  }
+  return removed;
+}
+
+/**
+ * 清掉目标房间里属于该 userId 的"死连接"成员记录。
+ *
+ * 服务端本就保证同一账号只保留最新连接（kickExistingSessions），
+ * 所以目标房里如果还有别人 socket 顶着同一个 userId，那条一定是残留。
+ * 一并摘掉，保证「房间里永远只有 1 个我」。
+ */
+function detachStaleSessionsOfUser(roomId, userId, keepWs) {
+  const rt = runtime.get(roomId); if (!rt) return 0;
+  let removed = 0;
+  for (const m of [...rt.members.values()]) {
+    if (m.userId !== userId || m.ws === keepWs) continue;
+    leaveRoom(m.clientId, roomId);
+    removed++;
+  }
+  return removed;
+}
+
 /** 判断某条旧连接是否与本次登录来自同一台设备 */
 function isSameDevice(oldWs, deviceId) {
   if (!deviceId || !oldWs || !oldWs.deviceId) return false;
@@ -1032,6 +1070,11 @@ wss.on('connection', (ws) => {
                                 : Object.values(store.rooms).find(r => r.no === safeStr(msg.no, 10));
         if (!room) return reply({ type: 'join:fail', msg: '房间不存在，请检查房间号' });
 
+        // 关键顺序：先把这条连接的旧身份（可能残留在别的房间）摘干净，再算麦位。
+        // 客户端换房/回房是直接 join、不先 leave，不摘的话就会出现"2 个我"。
+        detachWsFromRooms(ws);
+        detachStaleSessionsOfUser(room.id, userId, ws);
+
         clientId = uid('c'); joinedRoom = room.id;
         ws.clientId = clientId; ws.joinedRoom = joinedRoom; // 互踢移出房间用
         const rt = getRuntime(room.id);
@@ -1039,7 +1082,10 @@ wss.on('connection', (ws) => {
         const used = new Set([...rt.members.values()].map(m => m.seat));
         let seat = -1;
         if (isOwner) {
-          // 房主固定坐 0 号主位（顶部带头像框）
+          // 房主固定坐 0 号主位（顶部带头像框）。
+          // 兜底：若 0 号位还被人占着（历史残留），先把占位者挪下麦，
+          // 否则会出现两条成员记录挤在同一个麦位上。
+          for (const m of rt.members.values()) if (m.seat === 0) m.seat = -1;
           seat = 0;
         } else {
           // 宾客从 1-8 号麦位找空位，坐满则站观众席
@@ -1060,7 +1106,9 @@ wss.on('connection', (ws) => {
 
         reply({ type: 'join:ok', data: { clientId, roomId: room.id, userId } });
         for (const m of rt.members.values()) {
-          if (m.clientId !== clientId && m.ws && m.ws.readyState === 1) {
+          // 注意 m.ws !== ws：同一条连接可能在房间里有多条历史记录，
+          // 少了这个判断就会把 peer:new 发给"自己"，客户端会跟自己的幽灵建语音连接
+          if (m.clientId !== clientId && m.ws !== ws && m.ws && m.ws.readyState === 1) {
             m.ws.send(JSON.stringify({ type: 'peer:new', data: { clientId, userId } }));
           }
         }
@@ -1075,6 +1123,17 @@ wss.on('connection', (ws) => {
         joinedRoom = null; clientId = null;
         ws.joinedRoom = null; ws.clientId = null;
         break;
+
+      /* 客户端主动拉一次快照。
+         用途：设置房间背景、换麦序、从后台回前台之后，界面要立刻跟上最新房间状态，
+         不必等下一次被动推送（以前只能退出房间重进才能刷新）。只回给请求方，不打扰别人。 */
+      case 'room:sync': {
+        const rid = joinedRoom || safeStr(msg.roomId, 40);
+        if (!rid) return;
+        const snap = roomSnapshot(rid);
+        if (snap) reply({ type: 'room:state', data: snap });
+        break;
+      }
 
       case 'room:rename': {
         const room = store.rooms[safeStr(msg.roomId, 40)];

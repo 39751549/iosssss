@@ -19,6 +19,10 @@ final class MediaCache: NSObject {
     private let memory: NSCache<NSString, UIImage> = {
         let c = NSCache<NSString, UIImage>()
         c.countLimit = 120
+        // 按解码后的真实字节数记账：一张 40 帧的 GIF 就是几十 MB，
+        // 只按"张数"限流的话很容易在几张动图上就把内存吃穿，
+        // 换来的是系统内存警告 + 缓存被清空（图忽有忽无）。
+        c.totalCostLimit = 96 * 1024 * 1024
         return c
     }()
 
@@ -54,79 +58,150 @@ final class MediaCache: NSObject {
     // MARK: - 取图
 
     /// 同步取内存命中（用于 SwiftUI 首帧无闪烁）
-    func cachedImage(for url: URL) -> UIImage? {
-        memory.object(forKey: key(url) as NSString)
+    func cachedImage(for url: URL, profile: DecodeProfile = .generic) -> UIImage? {
+        memory.object(forKey: (key(url) + profile.keySuffix) as NSString)
     }
 
     /// 异步取图：内存 → 磁盘 → 网络
-    func image(for url: URL, completion: @escaping (UIImage?) -> Void) {
-        let k = key(url)
-        let nsKey = k as NSString
+    /// - Parameter profile: 解码档位。同一 URL 按不同档位解码的结果分开缓存。
+    func image(for url: URL, profile: DecodeProfile = .generic,
+               completion: @escaping (UIImage?) -> Void) {
+        let fileKey = key(url)                 // 磁盘文件名（原始数据，与档位无关）
+        let memKey = fileKey + profile.keySuffix
+        let nsKey = memKey as NSString
 
         if let img = memory.object(forKey: nsKey) {
             completion(img)
             return
         }
 
-        let disk = diskURL(for: k, ext: url.pathExtension)
+        let disk = diskURL(for: fileKey, ext: url.pathExtension)
         ioQueue.async { [weak self] in
             guard let self else { return }
-            if let data = try? Data(contentsOf: disk), let img = Self.decode(data) {
+            if let data = try? Data(contentsOf: disk), let img = Self.decode(data, profile: profile) {
                 self.touch(disk)   // 更新 LRU
-                self.memory.setObject(img, forKey: nsKey)
+                self.memory.setObject(img, forKey: nsKey, cost: Self.byteCost(img))
                 DispatchQueue.main.async { completion(img) }
                 return
             }
             // 磁盘没有 → 下载（并发去重）
-            self.download(url: url, key: k, completion: completion)
+            self.download(url: url, fileKey: fileKey, profile: profile, completion: completion)
         }
     }
 
-    /// 从原始数据解码图片；GIF 保留全部帧（UIImageView 会自动逐帧播放）
-    /// 注意：UIImage(data:) 对 GIF 只取首帧，必须走 ImageIO 才能拿到动图
-    static func decode(_ data: Data) -> UIImage? {
-        if let src = CGImageSourceCreateWithData(data as CFData, nil),
-           CGImageSourceGetCount(src) > 1 {
-            return UIImage.animatedImage(with: frames(from: src), duration: gifDuration(src))
-        }
-        return UIImage(data: data)
-    }
+    /// 解码档位：决定解码出来的最大边长、以及动图最多保留几帧。
+    ///
+    /// 为什么必须分档：用户上传的头像/背景动辄是 4MB、40~50 帧的 GIF。
+    /// 按原尺寸全帧解码，**一张就吃掉 35~45MB 内存**
+    /// （例：399×572×4B × 41 帧 ≈ 37MB；352×624×4B × 50 帧 ≈ 44MB）。
+    /// 头像+背景两张一起 80MB+，系统立刻发内存警告 → NSCache 被清空 →
+    /// 图"本来有，突然又不见了"，同时解码本身还很慢（表现为"要等好久才生效"）。
+    /// 按实际显示尺寸解码 + 限制帧数，才是对症的做法。
+    enum DecodeProfile {
+        /// 麦位/名片头像：屏幕上最大也就 82pt，解码到 256px 足够清晰
+        case avatar
+        /// 房间背景：铺满屏幕，但源图本身很小，帧数上限比尺寸更关键
+        case background
+        case generic
 
-    private static func frames(from src: CGImageSource) -> [UIImage] {
-        let count = CGImageSourceGetCount(src)
-        var out: [UIImage] = []
-        out.reserveCapacity(count)
-        for i in 0..<count {
-            if let cg = CGImageSourceCreateImageAtIndex(src, i, nil) {
-                out.append(UIImage(cgImage: cg))
+        var maxPixel: CGFloat {
+            switch self {
+            case .avatar:     return 256
+            case .background: return 1024
+            case .generic:    return 1024
             }
         }
-        return out
-    }
 
-    /// 累加每帧延时（GIF 帧延时为百分之一秒）
-    private static func gifDuration(_ src: CGImageSource) -> Double {
-        let count = CGImageSourceGetCount(src)
-        var total = 0.0
-        for i in 0..<count {
-            guard let props = CGImageSourceCopyPropertiesAtIndex(src, i, nil) as? [String: Any],
-                  let gif = props[kCGImagePropertyGIFDictionary as String] as? [String: Any] else { continue }
-            let delay = (gif[kCGImagePropertyGIFUnclampedDelayTime as String] as? Double)
-                ?? (gif[kCGImagePropertyGIFDelayTime as String] as? Double) ?? 0.1
-            total += delay < 0.02 ? 0.1 : delay
+        var maxFrames: Int {
+            switch self {
+            case .avatar:     return 48
+            case .background: return 20
+            case .generic:    return 24
+            }
         }
-        return total > 0 ? total : Double(count) * 0.1
+
+        /// 进内存缓存键：同一 URL 按不同档位解码的结果不能互相覆盖
+        var keySuffix: String {
+            switch self {
+            case .avatar:     return "#a"
+            case .background: return "#b"
+            case .generic:    return "#g"
+            }
+        }
     }
 
-    private func download(url: URL, key: String, completion: @escaping (UIImage?) -> Void) {
+    /// 从原始数据解码图片。
+    /// 注意：`UIImage(data:)` 对 GIF 只取首帧，必须走 ImageIO 才能拿到动图。
+    /// - Parameters:
+    ///   - profile: 按用途限制最大边长与帧数，避免超大 GIF 撑爆内存
+    static func decode(_ data: Data, profile: DecodeProfile = .generic) -> UIImage? {
+        guard let src = CGImageSourceCreateWithData(data as CFData, nil) else {
+            return UIImage(data: data)
+        }
+        let count = CGImageSourceGetCount(src)
+        if count <= 1 {
+            if let cg = scaledFrame(src, 0, profile.maxPixel) { return UIImage(cgImage: cg) }
+            return UIImage(data: data)
+        }
+
+        // 抽帧步长：帧数超上限时按固定步长抽样，并把被跨过帧的时长累加到保留帧上，
+        // 这样总时长（也就是播放速度）保持不变，只是不那么"丝滑"。
+        let step = max(1, Int(ceil(Double(count) / Double(profile.maxFrames))))
+        var frames: [UIImage] = []
+        var total = 0.0
+        var i = 0
+        while i < count {
+            if let cg = scaledFrame(src, i, profile.maxPixel) {
+                frames.append(UIImage(cgImage: cg))
+            }
+            var span = 0.0
+            for k in i..<min(i + step, count) { span += frameDelay(src, k) }
+            total += span
+            i += step
+        }
+        guard !frames.isEmpty else { return UIImage(data: data) }
+        return UIImage.animatedImage(with: frames, duration: total > 0 ? total : Double(frames.count) * 0.1)
+    }
+
+    /// 取第 index 帧并缩放到 maxPixel 以内（源图本身就小的话直接原样取出）
+    private static func scaledFrame(_ src: CGImageSource, _ index: Int, _ maxPixel: CGFloat) -> CGImage? {
+        let opts: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixel
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(src, index, opts as CFDictionary)
+            ?? CGImageSourceCreateImageAtIndex(src, index, nil)
+    }
+
+    /// 单帧延时（GIF 帧延时为百分之一秒）
+    private static func frameDelay(_ src: CGImageSource, _ index: Int) -> Double {
+        guard let props = CGImageSourceCopyPropertiesAtIndex(src, index, nil) as? [String: Any],
+              let gif = props[kCGImagePropertyGIFDictionary as String] as? [String: Any] else { return 0.1 }
+        let delay = (gif[kCGImagePropertyGIFUnclampedDelayTime as String] as? Double)
+            ?? (gif[kCGImagePropertyGIFDelayTime as String] as? Double) ?? 0.1
+        return delay < 0.02 ? 0.1 : delay
+    }
+
+    /// 解码后占用的字节数（用于 NSCache 的 cost 记账，超限时优先淘汰大图）
+    static func byteCost(_ img: UIImage) -> Int {
+        let frames = max(1, img.images?.count ?? 1)
+        return Int(img.size.width * img.size.height) * 4 * frames
+    }
+
+    private func download(url: URL, fileKey: String, profile: DecodeProfile,
+                          completion: @escaping (UIImage?) -> Void) {
+        // 去重键要带上档位：同一 URL 的头像档与背景档是两次不同的解码任务
+        let taskKey = fileKey + profile.keySuffix
         inflightLock.lock()
-        if var waiters = inflight[key] {
+        if var waiters = inflight[taskKey] {
             waiters.append(completion)
-            inflight[key] = waiters
+            inflight[taskKey] = waiters
             inflightLock.unlock()
             return
         }
-        inflight[key] = [completion]
+        inflight[taskKey] = [completion]
         inflightLock.unlock()
 
         var req = URLRequest(url: url)
@@ -137,17 +212,19 @@ final class MediaCache: NSObject {
         URLSession.shared.dataTask(with: req) { [weak self] data, _, _ in
             guard let self else { return }
             var image: UIImage?
-            if let data, let img = Self.decode(data) {
+            if let data, let img = Self.decode(data, profile: profile) {
                 image = img
-                let disk = self.diskURL(for: key, ext: url.pathExtension)
+                let disk = self.diskURL(for: fileKey, ext: url.pathExtension)
                 try? data.write(to: disk, options: .atomic)
             }
             self.inflightLock.lock()
-            let waiters = self.inflight[key] ?? []
-            self.inflight.removeValue(forKey: key)
+            let waiters = self.inflight[taskKey] ?? []
+            self.inflight.removeValue(forKey: taskKey)
             self.inflightLock.unlock()
 
-            if let image { self.memory.setObject(image, forKey: key as NSString) }
+            if let image {
+                self.memory.setObject(image, forKey: taskKey as NSString, cost: Self.byteCost(image))
+            }
             self.enforceLimit()
             DispatchQueue.main.async { waiters.forEach { $0(image) } }
         }.resume()
@@ -155,9 +232,9 @@ final class MediaCache: NSObject {
 
     // MARK: - 主动预取（进房前把背景下好，切房不闪）
 
-    func prefetch(_ url: URL) {
-        if cachedImage(for: url) != nil { return }
-        image(for: url) { _ in }
+    func prefetch(_ url: URL, profile: DecodeProfile = .generic) {
+        if cachedImage(for: url, profile: profile) != nil { return }
+        image(for: url, profile: profile) { _ in }
     }
 
     // MARK: - 路径与键

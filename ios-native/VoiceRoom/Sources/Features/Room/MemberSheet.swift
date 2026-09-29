@@ -4,11 +4,12 @@ import SwiftUI
 struct MemberSheet: View {
 
     let state: VRRoomState
-    let onOpenCard: (VRMember) -> Void
 
     @EnvironmentObject var app: AppState
     @Environment(\.dismiss) private var dismiss
     @State private var giftTarget: VRMember?
+    /// 名片（点成员行）—— 挂在成员列表自己身上，避免"收起列表 + 弹出名片"两个 sheet 打架
+    @State private var cardTarget: VRCardTarget?
 
     private var micMembers: [VRMember] {
         state.members.filter { $0.seat >= 0 }.sorted { $0.seat < $1.seat }
@@ -70,6 +71,10 @@ struct MemberSheet: View {
         .vrSheet(medium: true, large: true)
         .sheet(item: $giftTarget) { m in
             GiftSheet(state: state, presetTarget: m.clientId).environmentObject(app)
+        }
+        // 名片挂在成员列表内部：列表不收起，也就不会出现"一个 sheet 收起、另一个弹出"的打架
+        .sheet(item: $cardTarget) { t in
+            UserCardSheet(member: t.member, state: state).environmentObject(app)
         }
     }
 
@@ -143,8 +148,11 @@ struct MemberSheet: View {
         )
         .contentShape(Rectangle())
         .onTapGesture {
-            dismiss()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { onOpenCard(m) }
+            // 关键：**不要**先 dismiss 再让外面弹名片。
+            // iOS 一个视图同时只能有一个 sheet；成员列表还在收起动画里时让名片弹出来，
+            // 系统会把名片立刻收掉，而绑定值依旧非空 → 于是"打开-关闭-打开-关闭"无限循环。
+            // 正确做法是把名片挂在成员列表自己身上（嵌套 sheet），两个弹层各归各的。
+            cardTarget = VRCardTarget(member: m)
         }
     }
 }

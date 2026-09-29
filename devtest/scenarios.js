@@ -347,6 +347,68 @@ async function s9_背景进出房间仍在() {
   c2.close();
 }
 
+/**
+ * 10. 换房不先退房，回原房间不能出现「2 个我」。
+ *
+ * 用户报的场景：进别人房间再回自己房间 → 房间里出现两个我 → 点麦位名片无限开关。
+ * 根因是客户端从大厅点房间是**直接 join**（LobbyView 就是这么调的），
+ * 旧房间里的成员记录没被清掉，同一个 userId 留下两条记录、还共用同一条 socket：
+ *   - 快照里"我"出现 2 次 → 界面两个我
+ *   - 服务端把 peer:new 发给这条连接自己 → 客户端跟自己的幽灵建语音连接（信令自我回环）
+ * 修复：room:join 先把这条 ws 从所有房间摘干净，并清掉目标房里同 userId 的死连接。
+ */
+async function s10_换房回来不出现两个我() {
+  section('换房回房不出现「2 个我」');
+  const uname = 'mul_' + rnd();
+  const dev = 'dev-mul-' + rnd();
+
+  const a = new IOSClient({ host: HOST, label: 'mul-A', deviceId: dev, username: uname, password: 'pw123456' });
+  await a.connect();
+  await a.signup(uname);
+  const roomA = await a.createRoom('我的房间');
+
+  // 另一个人建一个别的房间
+  const b = new IOSClient({ host: HOST, label: 'mul-B', deviceId: 'dev-mul-b-' + rnd() });
+  await b.connect();
+  await b.signup('mulb_' + rnd());
+  const roomB = await b.createRoom('别人的房间');
+
+  const mine = (st) => (st && st.members ? st.members.filter((m) => m.user && m.user.id === a.userId) : []);
+
+  await a.joinRoom(roomA);
+  check('进自己房间：只有 1 个我', mine(a.roomState).length === 1, '出现 ' + mine(a.roomState).length + ' 次');
+
+  // 不先 room:leave，直接进别的房间（与 App 的真实点击一致）
+  await a.joinRoom(roomB);
+  check('进别人房间：正常 1 个我', mine(a.roomState).length === 1);
+
+  await a.joinRoom(roomA);
+  const dup = mine(a.roomState);
+  check('回自己房间：仍然只有 1 个我', dup.length === 1, '出现 ' + dup.length + ' 次');
+  const seats = dup.map((m) => m.seat);
+  check('麦位不重复占用', new Set(seats).size === seats.length, '麦位 = ' + JSON.stringify(seats));
+
+  const myCid = new Set(dup.map((m) => m.clientId));
+  const selfPeerNew = a.received.filter(
+    (m) => m.type === 'peer:new' && m.data && myCid.has(m.data.clientId)
+  );
+  check('没有指向自己的 peer:new（不会跟自己建语音连接）', selfPeerNew.length === 0,
+        selfPeerNew.length + ' 条');
+
+  // 换麦位后主动 sync，必须能立刻拿到最新快照（背景/成员即时刷新用）
+  const before = a.received.filter((m) => m.type === 'room:state').length;
+  a.send({ type: 'room:sync' });
+  await wait(700);
+  const after = a.received.filter((m) => m.type === 'room:state').length;
+  check('room:sync 能立刻拉回快照', after > before, before + ' → ' + after);
+
+  // 顺手验证房主权限没有因为 0 号位而丢
+  check('房主快照里 hostClientId 就是自己', a.roomState.hostClientId === a.roomState.members.find(
+    (m) => m.user && m.user.id === a.userId).clientId);
+
+  a.close(); b.close();
+}
+
 // ---------- 入口 ----------
 
 async function main() {
@@ -358,6 +420,7 @@ async function main() {
   await s5_同设备重复登录不误报();
   await s6_自定义背景全链路();
   await s9_背景进出房间仍在();
+  await s10_换房回来不出现两个我();
   await s7_音乐同步();
   await s8_畸形消息不崩();
 

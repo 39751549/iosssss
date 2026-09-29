@@ -229,8 +229,9 @@ struct ProfileEditSheet: View {
     }
 
     private func animatedImage(from data: Data) -> UIImage? {
-        // 必须走 MediaCache.decode（ImageIO），UIImage(data:) 对 GIF 只取首帧
-        return MediaCache.decode(data)
+        // 必须走 MediaCache.decode（ImageIO），UIImage(data:) 对 GIF 只取首帧。
+        // 用 .avatar 档位：头像最大也就显示到 82pt，没必要原尺寸全帧解码。
+        return MediaCache.decode(data, profile: .avatar)
     }
 }
 
