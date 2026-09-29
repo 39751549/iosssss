@@ -289,23 +289,36 @@ struct RoomView: View {
         .musicBarChrome(corner: 15)
     }
 
-    /// 折叠形态：一个圆图标（带环形进度），点一下展开
+    /// 折叠形态：一颗**透明的音符图标**（无底板，只靠图标本身 + 白色外发光保证可读），点一下展开
+    ///
+    /// 为什么不用白色圆形底板：折叠态本来就是个"最小占位"，画一块白底等于在房间背景上
+    /// 贴了一张不透明的圆片，既挡背景又和展开态的玻璃条视觉不统一。
+    /// 为什么不用白色图标：房间背景是明亮色系（天空蓝 / 樱花粉），白图标会糊进背景里。
+    /// 所以用品牌蓝画图标，再叠两层白色外发光当作描边，深浅背景都能看清。
     private func collapsedMusicBar(width: CGFloat) -> some View {
         ZStack {
-            Circle().fill(.ultraThinMaterial)
-            Circle().fill(Color.white.opacity(0.5))
-            Text(state.playing ? "⏸" : "🎵")
-                .font(.system(size: 17))
-            // 环形进度：一眼看到放到哪了
-            Circle()
-                .trim(from: 0, to: max(0.001, min(1, player.progressFraction)))
-                .stroke(VRTheme.brand, style: StrokeStyle(lineWidth: 2.4, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-                .padding(2.5)
+            // 环形进度：折叠时唯一能看到播放位置的地方。
+            // 只在真正播放时出现，且细到不会把图标"框"成一个按钮。
+            if state.playing {
+                Circle()
+                    .stroke(VRTheme.brand.opacity(0.16), lineWidth: 1.8)
+                Circle()
+                    .trim(from: 0, to: max(0.001, min(1, player.progressFraction)))
+                    .stroke(VRTheme.brand, style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                    .shadow(color: .white.opacity(0.9), radius: 2)
+            }
+
+            Image(systemName: "music.note")
+                .font(.system(size: 21, weight: .bold))
+                .foregroundColor(VRTheme.brand)
+                // 暂停时压暗一点，一眼区分"在放"和"没放"，但不换图标形状
+                .opacity(state.playing ? 1 : 0.5)
+                // 白色外发光（画两层）＝ 给图标描个白边，亮背景上也不会糊掉
+                .shadow(color: .white.opacity(0.95), radius: 2)
+                .shadow(color: .white.opacity(0.75), radius: 5)
         }
         .frame(width: width, height: width)
-        .overlay(Circle().strokeBorder(VRTheme.brand.opacity(0.35), lineWidth: 1))
-        .shadow(color: VRTheme.text.opacity(0.16), radius: 9, y: 3)
         .contentShape(Circle())
         .onTapGesture { setMusicBarExpanded(true) }
     }
