@@ -50,7 +50,7 @@ struct VRAvatar: View {
     }
 }
 
-/// 支持 dataURL 的完整头像视图（性能敏感列表用 VRAvatar，detail 页用这个）
+/// 完整头像视图：支持 dataURL、服务端 URL（/avatar/xxx）、GIF 动图与透明 PNG
 struct VRAvatarFull: View {
     let user: VRUser?
     var size: CGFloat = 40
@@ -60,7 +60,13 @@ struct VRAvatarFull: View {
     var body: some View {
         Group {
             if let image {
-                Image(uiImage: image).resizable().scaledToFill()
+                // GIF 动图用 UIImageView 承载才能播放
+                if image.images != nil {
+                    GIFImageView(image: image, contentMode: .scaleAspectFill)
+                        .frame(width: size, height: size)
+                } else {
+                    Image(uiImage: image).resizable().scaledToFill()
+                }
             } else {
                 VRAvatar(user: user, size: size)
             }
@@ -75,11 +81,30 @@ struct VRAvatarFull: View {
     }
 
     private func loadIfNeeded() {
-        guard let s = user?.avatar, s.hasPrefix("data:image"),
-              let range = s.range(of: "base64,") else { return }
-        let b64 = String(s[range.upperBound...])
-        guard let data = Data(base64Encoded: b64) else { return }
-        image = UIImage(data: data)
+        guard let s = user?.avatar, !s.isEmpty else { return }
+
+        // 1) dataURL（历史上传的老数据 / 本地预览）
+        if s.hasPrefix("data:image"), let range = s.range(of: "base64,") {
+            let b64 = String(s[range.upperBound...])
+            if let data = Data(base64Encoded: b64) { image = MediaCache.decode(data) }
+            return
+        }
+
+        // 2) 服务端文件地址（/avatar/xxx.png）；走 MediaCache：URL 不变就不重复下载
+        guard let url = absoluteAvatarURL(s) else { return }
+        if let hit = MediaCache.shared.cachedImage(for: url) {
+            image = hit
+            return
+        }
+        MediaCache.shared.image(for: url) { img in
+            image = img
+        }
+    }
+
+    private func absoluteAvatarURL(_ s: String) -> URL? {
+        if s.hasPrefix("http") { return URL(string: s) }
+        guard let base = VRConfig.baseURL else { return nil }
+        return URL(string: s, relativeTo: base)
     }
 }
 
@@ -519,8 +544,9 @@ extension View {
 
 // MARK: - 相册选图（iOS 15 可用；PhotosPicker 需要 iOS 16）
 
+/// 相册选图：同时回传 UIImage 与**原始文件数据**（用于保留 GIF 动画 / PNG 透明）
 struct VRPhotoPicker: UIViewControllerRepresentable {
-    var onPicked: (UIImage) -> Void
+    var onPicked: (UIImage, Data?) -> Void
     @Environment(\.dismiss) private var dismiss
 
     func makeUIViewController(context: Context) -> UIImagePickerController {
@@ -540,9 +566,14 @@ struct VRPhotoPicker: UIViewControllerRepresentable {
 
         func imagePickerController(_ picker: UIImagePickerController,
                                    didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-            if let img = info[.originalImage] as? UIImage {
-                parent.onPicked(img)
+            let img = info[.originalImage] as? UIImage
+            // 原始文件数据：GIF / PNG 都靠它保留动画与透明
+            var raw: Data? = nil
+            if let url = info[.imageURL] as? URL {
+                raw = try? Data(contentsOf: url)
             }
+            if raw == nil, let i = img { raw = i.pngData() }
+            if let img { parent.onPicked(img, raw) }
             parent.dismiss()
         }
 

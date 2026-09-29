@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import UIKit
+import ImageIO
 
 /// 通用媒体缓存（头像 / 背景图 / GIF）
 ///
@@ -63,7 +64,7 @@ final class MediaCache: NSObject {
         let disk = diskURL(for: k, ext: url.pathExtension)
         ioQueue.async { [weak self] in
             guard let self else { return }
-            if let data = try? Data(contentsOf: disk), let img = UIImage(data: data) {
+            if let data = try? Data(contentsOf: disk), let img = Self.decode(data) {
                 self.touch(disk)   // 更新 LRU
                 self.memory.setObject(img, forKey: nsKey)
                 DispatchQueue.main.async { completion(img) }
@@ -72,6 +73,42 @@ final class MediaCache: NSObject {
             // 磁盘没有 → 下载（并发去重）
             self.download(url: url, key: k, completion: completion)
         }
+    }
+
+    /// 从原始数据解码图片；GIF 保留全部帧（UIImageView 会自动逐帧播放）
+    /// 注意：UIImage(data:) 对 GIF 只取首帧，必须走 ImageIO 才能拿到动图
+    static func decode(_ data: Data) -> UIImage? {
+        if let src = CGImageSourceCreateWithData(data as CFData, nil),
+           CGImageSourceGetCount(src) > 1 {
+            return UIImage.animatedImage(with: frames(from: src), duration: gifDuration(src))
+        }
+        return UIImage(data: data)
+    }
+
+    private static func frames(from src: CGImageSource) -> [UIImage] {
+        let count = CGImageSourceGetCount(src)
+        var out: [UIImage] = []
+        out.reserveCapacity(count)
+        for i in 0..<count {
+            if let cg = CGImageSourceCreateImageAtIndex(src, i, nil) {
+                out.append(UIImage(cgImage: cg))
+            }
+        }
+        return out
+    }
+
+    /// 累加每帧延时（GIF 帧延时为百分之一秒）
+    private static func gifDuration(_ src: CGImageSource) -> Double {
+        let count = CGImageSourceGetCount(src)
+        var total = 0.0
+        for i in 0..<count {
+            guard let props = CGImageSourceCopyPropertiesAtIndex(src, i, nil) as? [String: Any],
+                  let gif = props[kCGImagePropertyGIFDictionary as String] as? [String: Any] else { continue }
+            let delay = (gif[kCGImagePropertyGIFUnclampedDelayTime as String] as? Double)
+                ?? (gif[kCGImagePropertyGIFDelayTime as String] as? Double) ?? 0.1
+            total += delay < 0.02 ? 0.1 : delay
+        }
+        return total > 0 ? total : Double(count) * 0.1
     }
 
     private func download(url: URL, key: String, completion: @escaping (UIImage?) -> Void) {
@@ -93,7 +130,7 @@ final class MediaCache: NSObject {
         URLSession.shared.dataTask(with: req) { [weak self] data, _, _ in
             guard let self else { return }
             var image: UIImage?
-            if let data, let img = UIImage(data: data) {
+            if let data, let img = Self.decode(data) {
                 image = img
                 let disk = self.diskURL(for: key, ext: url.pathExtension)
                 try? data.write(to: disk, options: .atomic)
