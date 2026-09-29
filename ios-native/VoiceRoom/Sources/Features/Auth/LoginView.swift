@@ -143,8 +143,10 @@ struct LoginView: View {
     private func doLogin() {
         let trimmed = username.trimmingCharacters(in: .whitespaces).lowercased()
         let pass = password
-        guard let _ = trimmed.range(of: "^[0-9a-z_\\u{4E00}-\\u{9FA5}]{2,24}$",
-                                    options: .regularExpression) else {
+        // 注意：range(of:options:.regularExpression) 是 ICU 正则，Unicode 转义必须用 \u4E00（4 位），
+        // 不能用 Swift Regex 的 \u{4E00} 花括号写法（无效正则会让所有输入都被拒）
+        let pattern = "^[0-9a-z_\\u4E00-\\u9FA5]{2,24}$"
+        guard let _ = trimmed.range(of: pattern, options: .regularExpression) else {
             app.showToast("账号需 2-24 位字母/数字/下划线/中文", kind: .error)
             return
         }
