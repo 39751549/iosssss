@@ -451,8 +451,8 @@ function renderSeats(s) {
         ${VR.avatarHtml(host.user, 74)}
         <div class="host-name">
           <span class="host-fang">房</span>
-          <span class="hn-text">${VR.esc(host.user.name)}</span>
-          ${host.user.vip ? '<span class="host-vip">👑</span>' : ''}${VR.vipBadge(host.user.vipLevel, true)}
+          <span class="hn-text">${VR.vipName(host.user.name, host.user.vip, host.user.vipLevel)}</span>
+          ${host.user.vip ? '<span class="host-vip">👑</span>' : ''}
         </div>
       </div>`;
   } else {
@@ -476,7 +476,7 @@ function renderSeats(s) {
         ${isOwnerHere ? '<div class="seat-crown">👑</div>' : ''}
         <div class="mic-state ${m.muted ? 'muted' : ''}">${m.muted ? '🔇' : '🎤'}</div>
         ${VR.avatarHtml(m.user, 54)}
-        <div class="sname">${VR.esc(m.user.name)} ${VR.vipBadge(m.user.vipLevel, true)}</div>
+        <div class="sname">${VR.vipName(m.user.name, m.user.vip, m.user.vipLevel)}</div>
       </div>`;
     } else {
       html += `<div class="seat empty" onclick="takeSeat(${i})">
@@ -531,8 +531,7 @@ function renderMembers(s) {  document.getElementById('memberCount').textContent 
     return `<div class="member-item" onclick="openCard('${m.clientId}')">
       ${VR.avatarHtml(m.user, 40)}
       <div class="member-meta">
-        <div class="mn">${VR.esc(m.user.name)}
-          ${VR.vipBadge(m.user.vipLevel)}
+        <div class="mn">${VR.vipName(m.user.name, m.user.vip, m.user.vipLevel)}
           ${isHost ? '<span class="badge badge-blue">房主</span>' : ''}
         </div>
         <div class="ms">${VR.genderIcon(m.user.gender)} · ${m.seat >= 0 ? (m.seat === 0 ? '房主主位' : m.seat + ' 号麦') : '听众'} · 💖 ${VR.shortNum(m.user.charm)}</div>
@@ -553,7 +552,7 @@ function openCard(cid) {
     <div style="text-align:center">
       <div style="display:flex;justify-content:center">${VR.avatarHtml(u, 88)}</div>
       <div style="font-size:19px;font-weight:800;margin-top:12px;display:flex;align-items:center;justify-content:center;gap:6px">
-        ${VR.esc(u.name)}
+        ${VR.vipName(u.name, u.vip, u.vipLevel)}
         ${VR.vipBadge(u.vipLevel)}
       </div>
       <div style="font-size:12.5px;color:var(--text-dim);margin-top:7px">
@@ -637,8 +636,7 @@ function appendChat(m) {
       ${VR.avatarHtml({ id: m.userId, name: m.name, avatar: m.avatar }, 26)}
       <div class="msg-main">
         <div class="msg-head">
-          <span class="msg-name">${VR.esc(m.name)}</span>
-          ${VR.vipBadge(m.vipLevel || (m.vip ? 1 : 0), true)}
+          <span class="msg-name">${VR.vipName(m.name, m.vip, m.vipLevel)}</span>
           <span style="font-size:10px;color:var(--text-mute)">${VR.hhmm(m.at)}</span>
         </div>
         <div class="msg-bubble">${VR.esc(m.text)}</div>

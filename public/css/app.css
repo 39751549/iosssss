@@ -760,3 +760,50 @@ input, textarea { outline: none; }
 
 /* 悬浮音乐球确保不被遮挡 */
 .fab-music { z-index: 60; }
+
+/* ---------- VIP 名字特权 ----------
+   等级数字只在名片里出现。麦位 / 公屏 / 成员列表 / 飘屏改用名字本身的颜色与流光表达身份：
+   1-4 银蓝 · 5-7 金色 · 8-10 紫色带白光扫过 · 11+ 三色流动。 */
+.vname {
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+.vname.v-silver { background-image: linear-gradient(135deg, #EFF7FF, #A8CCFF); }
+.vname.v-gold {
+  background-image: linear-gradient(135deg, #FFF0B8, #FFB53C, #FF8A00);
+  filter: drop-shadow(0 0 4px rgba(255, 181, 60, .6));
+}
+.vname.v-violet {
+  background-image:
+    linear-gradient(90deg, rgba(255,255,255,0) 44%, rgba(255,255,255,.95) 50%, rgba(255,255,255,0) 56%),
+    linear-gradient(135deg, #E9D2FF, #B368FF, #8B3FE8);
+  background-size: 300% 100%, 160% 100%;
+  background-repeat: no-repeat;
+  animation: vname-shimmer 3.2s linear infinite;
+  filter: drop-shadow(0 0 5px rgba(168, 85, 247, .75));
+}
+.vname.v-aurora {
+  background-image:
+    linear-gradient(90deg, rgba(255,255,255,0) 44%, rgba(255,255,255,.95) 50%, rgba(255,255,255,0) 56%),
+    linear-gradient(100deg, #FF7FAE, #FFD86B, #7ED0FF, #C79BFF, #FF7FAE);
+  background-size: 300% 100%, 260% 100%;
+  background-repeat: no-repeat;
+  animation: vname-aurora 2.4s linear infinite;
+  filter: drop-shadow(0 0 6px rgba(255, 127, 174, .85));
+  font-weight: 800;
+}
+/* 两层一起动：第一层是扫过的白光，第二层是底色渐变本身在流动 */
+@keyframes vname-shimmer {
+  from { background-position: 140% 0, 0 0; }
+  to   { background-position: -140% 0, 0 0; }
+}
+@keyframes vname-aurora {
+  from { background-position: 140% 0, 0% 0; }
+  to   { background-position: -140% 0, 100% 0; }
+}
+/* 系统开了「减弱动态效果」就只留静态配色 */
+@media (prefers-reduced-motion: reduce) {
+  .vname.v-violet, .vname.v-aurora { animation: none; background-position: 0 0, 0 0; }
+}

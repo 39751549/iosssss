@@ -237,9 +237,13 @@ struct LobbyView: View {
 
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(spacing: 6) {
-                                Text(app.me?.name ?? "—")
-                                    .font(.system(size: 16.5, weight: .bold))
-                                    .foregroundColor(VRTheme.text)
+                                VRNameText(name: app.me?.name ?? "—",
+                                           vip: app.me?.vip == true,
+                                           vipLevel: app.me?.vipLevel ?? 0,
+                                           size: 16.5,
+                                           weight: .bold,
+                                           baseColor: VRTheme.text,
+                                           onLight: true)
                                 if app.me?.vip == true {
                                     VRBadge(kind: .vip, text: "👑 VIP\(app.me?.vipLevel ?? 1)")
                                 }

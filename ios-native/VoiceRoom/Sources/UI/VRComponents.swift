@@ -98,7 +98,8 @@ struct VRAvatarFull: View {
     var isMine: Bool = false
     /// 正在说话 → 绿色环
     var speaking: Bool = false
-    /// VIP 等级（0 表示非 VIP）→ 按等级分色环 + 右下角等级小徽章
+    /// VIP 等级（0 表示非 VIP）→ 按等级给头像环分色。
+    /// 等级**数字**不在这里显示 —— 只在名片里出现，其余地方靠名字的颜色/流光表达身份。
     var vipLevel: Int = 0
     /// 以上都不适用时，要不要画一圈默认的白色描边（麦位在背景图上需要它来分离边缘；列表里不需要）
     var showNeutralRing: Bool = false
@@ -129,7 +130,6 @@ struct VRAvatarFull: View {
         // 头像框外发光（只有标了 glow 的框才有；其余返回 .clear 等于没画）
         .shadow(color: frameGlowColor, radius: frameGlowRadius)
         .overlay { ringView }
-        .overlay(alignment: .bottomTrailing) { vipLevelBadge }
         .overlay(alignment: .top) { crownBadge }
         .overlay(alignment: .topLeading) { frameBadge }
         .onAppear(perform: loadIfNeeded)
@@ -163,7 +163,7 @@ struct VRAvatarFull: View {
         return max(5, size * 0.16)
     }
 
-    /// 头像框角标（左上角）：右下角被 VIP 等级徽章占了、顶部被皇冠占了，三处正好不打架
+    /// 头像框角标（左上角）：顶部被皇冠占了，这里挂角标，两个不打架
     @ViewBuilder
     private var frameBadge: some View {
         if let b = frame?.badge, !b.isEmpty, size >= 30 {
@@ -193,13 +193,16 @@ struct VRAvatarFull: View {
     }
 
     /// VIP 分档配色，和服务端的 VIP 阶梯对齐：
-    /// 1-3 银蓝 / 4-6 紫 / 7-9 金 / 10+ 三色（粉金蓝）
+    /// 1-3 银蓝 / 4-6 紫 / 7-10 金 / 11+ 三色（粉金蓝）
+    ///
+    /// 11 级以上给三色，和 `VRNameTier.aurora` 对齐：同一个人头像环和名字
+    /// 用同一套色系，"顶配"的视觉一致性才立得住。
     private static func vipRingColors(_ level: Int) -> [Color] {
         switch level {
-        case ..<4:  return [Color(hex: "CFE6FF"), Color(hex: "6FA8FF")]
-        case 4...6: return [Color(hex: "D9B3FF"), Color(hex: "8E5BFF")]
-        case 7...9: return [Color(hex: "FFE08A"), Color(hex: "FF9F1C")]
-        default:    return [Color(hex: "FF7FAE"), Color(hex: "FFD86B"), Color(hex: "7ED0FF")]
+        case ..<4:   return [Color(hex: "CFE6FF"), Color(hex: "6FA8FF")]
+        case 4...6:  return [Color(hex: "D9B3FF"), Color(hex: "8E5BFF")]
+        case 7...10: return [Color(hex: "FFE08A"), Color(hex: "FF9F1C")]
+        default:     return [Color(hex: "FF7FAE"), Color(hex: "FFD86B"), Color(hex: "7ED0FF")]
         }
     }
 
@@ -214,27 +217,6 @@ struct VRAvatarFull: View {
                 // VIP / 房主的环加一点发光，看起来"bling bling"
                 .shadow(color: (colors.last ?? .clear).opacity(vipLevel > 0 || isHost ? 0.55 : 0),
                         radius: 4)
-        }
-    }
-
-    /// VIP 等级徽章的直径（太小的头像上不画徽章，否则糊成一团）
-    private var badgeDiameter: CGFloat { max(15, size * 0.36) }
-
-    /// 右下角 VIP 等级小徽章
-    @ViewBuilder
-    private var vipLevelBadge: some View {
-        if vipLevel > 0 && size >= 38 && !speaking {
-            Text("\(vipLevel)")
-                .font(.system(size: badgeDiameter * 0.62, weight: .heavy))
-                .foregroundColor(.white)
-                .frame(width: badgeDiameter, height: badgeDiameter)
-                .background(
-                    Circle().fill(LinearGradient(colors: Self.vipRingColors(vipLevel),
-                                                 startPoint: .top, endPoint: .bottom))
-                )
-                .overlay(Circle().strokeBorder(.white, lineWidth: 1.4))
-                .shadow(color: .black.opacity(0.22), radius: 3, y: 1)
-                .offset(x: 1, y: 1)
         }
     }
 
@@ -437,6 +419,170 @@ struct VRTextField: View {
             if newValue.count > maxLength {
                 text = String(newValue.prefix(maxLength))
             }
+        }
+    }
+}
+
+// MARK: - VIP 名字特权
+
+/// VIP 等级对应的「名字特权」档位。
+///
+/// 设计原则：**等级数字只出现在名片里**。麦位、公屏、成员列表、飘屏都不再贴 `VIP11` 这种
+/// 数字标签 —— 满屏数字既廉价又吵。身份改用名字本身的颜色 / 流光来表达：
+/// 一眼能看出"这人是大佬"，但不会每行都在报数字。
+///
+/// 档位（和服务端的 VIP 阶梯对齐，也和头像环分色保持一致）：
+/// | 等级 | 名字 |
+/// |---|---|
+/// | 1-4  | 银蓝，静态 |
+/// | 5-7  | 金色，轻微外发光 |
+/// | 8-10 | 紫色，白光扫过 |
+/// | 11+  | 三色流动，流光更快 + 强外发光 |
+enum VRNameTier: Equatable {
+    case plain
+    case silver
+    case gold
+    case violet
+    case aurora
+
+    init(vip: Bool, level: Int) {
+        guard vip, level > 0 else { self = .plain; return }
+        switch level {
+        case ..<5:   self = .silver
+        case 5..<8:  self = .gold
+        case 8..<11: self = .violet
+        default:     self = .aurora
+        }
+    }
+
+    /// 名字的渐变色。
+    ///
+    /// 分浅底 / 深底两套：同一组颜色不可能在白底面板和深色房间背景上都好看 ——
+    /// 浅蓝银放在白色气泡上几乎看不见，深紫放在暗背景里又会糊成一团。
+    func colors(onLight: Bool) -> [Color] {
+        switch self {
+        case .plain:
+            return []
+        case .silver:
+            return onLight
+                ? [Color(hex: "7FA9DD"), Color(hex: "4A7EC7")]
+                : [Color(hex: "EFF7FF"), Color(hex: "A8CCFF")]
+        case .gold:
+            return onLight
+                ? [Color(hex: "E8A400"), Color(hex: "C97A00")]
+                : [Color(hex: "FFF0B8"), Color(hex: "FFB53C"), Color(hex: "FF8A00")]
+        case .violet:
+            return onLight
+                ? [Color(hex: "9B4DE8"), Color(hex: "6D28D9")]
+                : [Color(hex: "E9D2FF"), Color(hex: "B368FF"), Color(hex: "8B3FE8")]
+        case .aurora:
+            return onLight
+                ? [Color(hex: "FF3D7F"), Color(hex: "E09400"), Color(hex: "1E9BE8"), Color(hex: "8B5CF6")]
+                : [Color(hex: "FF7FAE"), Color(hex: "FFD86B"), Color(hex: "7ED0FF"), Color(hex: "C79BFF")]
+        }
+    }
+
+    /// 外发光（颜色 + 半径）；nil 表示不发光
+    func glow(onLight: Bool) -> (Color, CGFloat)? {
+        switch self {
+        case .plain, .silver:
+            return nil
+        case .gold:
+            return (Color(hex: "FFB53C").opacity(onLight ? 0.38 : 0.62), onLight ? 3 : 4)
+        case .violet:
+            return (Color(hex: "A855F7").opacity(onLight ? 0.5 : 0.8), onLight ? 4 : 6)
+        case .aurora:
+            return (Color(hex: "FF7FAE").opacity(onLight ? 0.6 : 0.9), onLight ? 5 : 9)
+        }
+    }
+
+    /// 白光扫过字形的周期；nil = 不扫。
+    ///
+    /// 只有 8 级以上才扫 —— 公屏一热闹几十条消息同时在闪，那就不是"炫酷"是"眼瞎"了。
+    var shinePeriod: Double? {
+        switch self {
+        case .plain, .silver, .gold: return nil
+        case .violet: return 2.6
+        case .aurora: return 1.7
+        }
+    }
+}
+
+/// 带 VIP 特权的名字。
+///
+/// 非 VIP 走 `baseColor`（麦位上是白色、公屏上是品牌粉），保持原有观感不变。
+/// VIP 则用渐变填字 + 外发光 +（8 级以上）一道白光横着扫过字形。
+struct VRNameText: View {
+    let name: String
+    var vip: Bool = false
+    var vipLevel: Int = 0
+    var size: CGFloat = 11.5
+    var weight: Font.Weight = .semibold
+    /// 非 VIP 的底色
+    var baseColor: Color = .white
+    /// 名字所在的底是浅色（白色面板）还是深色（房间背景 / 飘屏）——决定用哪套配色
+    var onLight: Bool = false
+    var lineLimit: Int? = 1
+
+    /// 白光的水平进度：-0.6 时整条光在文字左侧外面，1.2 时在右侧外面
+    @State private var shine: CGFloat = -0.6
+
+    private var tier: VRNameTier { VRNameTier(vip: vip, level: vipLevel) }
+    private var font: Font { .system(size: size, weight: weight) }
+
+    var body: some View {
+        Group {
+            if tier == .plain {
+                Text(name)
+                    .font(font)
+                    .foregroundColor(baseColor)
+            } else {
+                Text(name)
+                    .font(font)
+                    .foregroundStyle(
+                        LinearGradient(colors: tier.colors(onLight: onLight),
+                                       startPoint: .leading, endPoint: .trailing)
+                    )
+                    .overlay { shineLayer }
+                    .shadow(color: glowColor, radius: glowRadius)
+            }
+        }
+        .lineLimit(lineLimit)
+        .minimumScaleFactor(0.75)
+        .onAppear(perform: startShine)
+    }
+
+    private var glowColor: Color { tier.glow(onLight: onLight)?.0 ?? .clear }
+    private var glowRadius: CGFloat { tier.glow(onLight: onLight)?.1 ?? 0 }
+
+    /// 一道白光横着扫过。用 mask 把光限制在字形里 —— 否则就是一块白条糊在名字上。
+    @ViewBuilder
+    private var shineLayer: some View {
+        if tier.shinePeriod != nil {
+            GeometryReader { geo in
+                let w = geo.size.width
+                LinearGradient(colors: [Color.white.opacity(0),
+                                        Color.white.opacity(0.95),
+                                        Color.white.opacity(0)],
+                               startPoint: .leading, endPoint: .trailing)
+                    .frame(width: max(10, w * 0.45))
+                    .offset(x: shine * w)
+            }
+            .mask(
+                Text(name)
+                    .font(font)
+                    .lineLimit(lineLimit)
+            )
+            .allowsHitTesting(false)
+        }
+    }
+
+    private func startShine() {
+        guard let period = tier.shinePeriod else { return }
+        // 视图被复用/重新出现时进度可能已经停在终点，先复位再起动画，否则"闪一次就不动了"
+        shine = -0.6
+        withAnimation(.linear(duration: period).repeatForever(autoreverses: false)) {
+            shine = 1.2
         }
     }
 }

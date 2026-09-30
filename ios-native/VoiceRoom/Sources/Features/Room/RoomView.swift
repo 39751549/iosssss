@@ -757,7 +757,7 @@ struct SeatCell: View {
                                      speaking: speaking,
                                      vipLevel: member.user.vip ? member.user.vipLevel : 0,
                                      showNeutralRing: true)
-                            // 静音标放左下角：右下角被 VIP 等级徽章占了，两个压一起会看不清
+                            // 静音标放左下角，避开右下角的头像框角标位
                             .overlay(alignment: .bottomLeading) {
                                 if member.muted {
                                     ZStack {
@@ -785,10 +785,12 @@ struct SeatCell: View {
                 }
                 .frame(width: 62, height: 62)
 
-                Text(member?.user.name ?? "空麦位")
-                    .font(.system(size: 11, weight: member == nil ? .regular : .medium))
-                    .foregroundColor(.white.opacity(member == nil ? 0.6 : 0.96))
-                    .lineLimit(1)
+                VRNameText(name: member?.user.name ?? "空麦位",
+                           vip: member?.user.vip == true,
+                           vipLevel: member?.user.vipLevel ?? 0,
+                           size: 11,
+                           weight: member == nil ? .regular : .medium,
+                           baseColor: .white.opacity(member == nil ? 0.6 : 0.96))
                     .padding(.horizontal, 7)
                     .padding(.vertical, 2)
                     .background(Capsule().fill(Color.black.opacity(0.26)))
@@ -801,10 +803,9 @@ struct SeatCell: View {
                         .padding(.horizontal, 6)
                         .padding(.vertical, 1.5)
                         .background(Capsule().fill(VRTheme.goldGradient))
-                } else if let member, member.user.vip {
-                    VRBadge(kind: .vip, text: "VIP\(member.user.vipLevel)")
-                        .scaleEffect(0.85)
                 }
+                // 这里原来挂着「VIP11」徽章。现在等级数字只在名片里出现，
+                // 身份改由名字的颜色/流光表达（见 VRNameTier）。
             }
         }
         .buttonStyle(.plain)
@@ -932,7 +933,7 @@ struct HostSeatCell: View {
                         }
                     }
                     .frame(width: 70, height: 70)
-                    // 静音标挪到左下角：右下角已经给了 VIP 等级徽章
+                    // 静音标放左下角，避开右下角的头像框角标位
                     .overlay(alignment: .bottomLeading) {
                         if let member, member.muted {
                             ZStack {
@@ -957,10 +958,12 @@ struct HostSeatCell: View {
                             .frame(width: 15, height: 15)
                             .background(Circle().fill(Color(hex: "E0344C")))
                     }
-                    Text(member?.user.name ?? "虚位以待")
-                        .font(.system(size: 11.5, weight: .semibold))
-                        .foregroundColor(.white.opacity(member == nil ? 0.65 : 0.98))
-                        .lineLimit(1)
+                    VRNameText(name: member?.user.name ?? "虚位以待",
+                               vip: member?.user.vip == true,
+                               vipLevel: member?.user.vipLevel ?? 0,
+                               size: 11.5,
+                               weight: .semibold,
+                               baseColor: .white.opacity(member == nil ? 0.65 : 0.98))
                 }
                 .padding(.horizontal, 9)
                 .padding(.vertical, 3.5)
@@ -1002,12 +1005,15 @@ struct ChatRow: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 5) {
-                        Text(message.name ?? "?")
-                            .font(.system(size: 11.5, weight: .semibold))
-                            .foregroundColor(nameColor)
-                        if message.vip == true {
-                            VRBadge(kind: .vip, text: "VIP").scaleEffect(0.8)
-                        }
+                        // 名字自带 VIP 特权色（金 / 紫流光 / 三色），不再贴「VIP」小标 ——
+                        // 颜色本身就是身份标记，再叠一个标签只会把名字挤窄
+                        VRNameText(name: message.name ?? "?",
+                                   vip: message.vip == true,
+                                   vipLevel: message.vip == true ? (message.vipLevel ?? 1) : 0,
+                                   size: 11.5,
+                                   weight: .semibold,
+                                   baseColor: nameColor,
+                                   onLight: true)
                         Text(message.timeText)
                             .font(.system(size: 9.5))
                             .foregroundColor(VRTheme.textMute)
@@ -1275,18 +1281,13 @@ struct VipChatMarqueeView: View {
             VRAvatarFull(user: user, size: 30, vipLevel: marquee.vipLevel)
 
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 5) {
-                    Text("VIP\(marquee.vipLevel)")
-                        .font(.system(size: 9, weight: .heavy))
-                        .foregroundColor(Color(hex: "5A3600"))
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1.5)
-                        .background(Capsule().fill(VRTheme.goldGradient))
-                    Text(marquee.name)
-                        .font(.system(size: 11.5, weight: .bold))
-                        .foregroundColor(.white)
-                        .lineLimit(1)
-                }
+                // 原来这里是一个「VIP11」金色胶囊。数字撤了 —— 飘屏本身就只服务 VIP，
+                // 再报一遍等级是冗余；名字的三色流光才是真正"炫耀"的地方。
+                VRNameText(name: marquee.name,
+                           vip: true,
+                           vipLevel: marquee.vipLevel,
+                           size: 12.5,
+                           weight: .bold)
                 Text(marquee.text)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(.white)
@@ -1299,10 +1300,13 @@ struct VipChatMarqueeView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
         .background(
+            // 底色从"整条金色"换成深夜紫：金色名字 / 三色名字压在金色底上根本读不出来，
+            // 深底才能把发光的名字衬出来。金边保留，VIP 的仪式感还在。
             RoundedRectangle(cornerRadius: 15, style: .continuous)
                 .fill(
-                    LinearGradient(colors: [Color(hex: "9A6A00").opacity(0.94),
-                                            Color(hex: "FFB53C").opacity(0.94)],
+                    LinearGradient(colors: [Color(hex: "2A1746").opacity(0.95),
+                                            Color(hex: "5B2E8C").opacity(0.95),
+                                            Color(hex: "2A1746").opacity(0.95)],
                                    startPoint: .leading, endPoint: .trailing)
                 )
         )

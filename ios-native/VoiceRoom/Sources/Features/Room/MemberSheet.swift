@@ -105,11 +105,14 @@ struct MemberSheet: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 5) {
-                    Text(m.user.name)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(VRTheme.text)
-                        .lineLimit(1)
-                    if m.user.vip { VRBadge(kind: .vip, text: "VIP\(m.user.vipLevel)") }
+                    // 等级数字不在这显示（只在名片里）。VIP 身份靠名字颜色区分。
+                    VRNameText(name: m.user.name,
+                               vip: m.user.vip,
+                               vipLevel: m.user.vipLevel,
+                               size: 14,
+                               weight: .semibold,
+                               baseColor: VRTheme.text,
+                               onLight: true)
                     if isHost { VRBadge(kind: .host, text: "房主") }
                     if m.clientId == app.clientId { VRBadge(kind: .green, text: "我") }
                 }
@@ -368,13 +371,17 @@ struct UserCardSheet: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 5) {
-                    Text(user.name)
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundColor(VRTheme.text)
-                        .lineLimit(1)
+                    // 名片是**唯一**保留等级数字的地方 —— 用户明确要求"显示在名片就好"。
+                    // 名字本身也带特效，和数字徽章并排正好一个说"是谁"一个说"多高"。
+                    VRNameText(name: user.name,
+                               vip: user.vip,
+                               vipLevel: user.vipLevel,
+                               size: 18,
+                               weight: .bold,
+                               baseColor: VRTheme.text,
+                               onLight: true)
                     VRGenderIcon(gender: user.gender)
                     if user.vip {
-                        // 名字右侧的等级小章（图片里那个数字徽章的位置）
                         Text("VIP\(user.vipLevel)")
                             .font(.system(size: 10, weight: .heavy))
                             .foregroundColor(.white)

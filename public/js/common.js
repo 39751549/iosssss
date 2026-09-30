@@ -215,10 +215,27 @@ const VR = (() => {
   }
 
   /* ---------- VIP 等级徽章（1-12 级） ---------- */
+  /* ---------- 名字特权 ----------
+     等级数字只在名片里显示。麦位 / 公屏 / 成员列表 / 飘屏都不再贴「V11」这种数字标签，
+     身份改用名字本身的颜色与流光表达 —— 一眼看出"这人是大佬"，但不会满屏都在报数字。 */
+  const VNAME_TIERS = [
+    { min: 11, cls: 'v-aurora' },   // 三色流动
+    { min: 8,  cls: 'v-violet' },   // 紫色 + 白光扫过
+    { min: 5,  cls: 'v-gold'   },   // 金色
+    { min: 1,  cls: 'v-silver' },   // 银蓝
+  ];
+  /** 带 VIP 特权的名字。非 VIP 原样返回（不含任何包裹） */
+  function vipName(name, vip, level) {
+    const lv = Math.max(0, Math.min(12, Number(level) || 0));
+    if (!vip && lv <= 0) return esc(name);
+    const t = VNAME_TIERS.find(x => lv >= x.min);
+    if (!t) return esc(name);
+    return `<span class="vname ${t.cls}">${esc(name)}</span>`;
+  }
+
   function vipBadge(level, small) {
     const lv = Math.max(0, Math.min(12, Number(level) || 0));
     if (lv <= 0) return '';
-    const hue = 45 - (lv - 1) * 3; // 等级越高越偏金红
     const bg = lv >= 10
       ? 'linear-gradient(135deg,#FF3B5C,#FF8A3D)'
       : lv >= 6
@@ -256,6 +273,6 @@ const VR = (() => {
   return { LS, toast, esc, avatarHtml, genAvatar, avatarColor, hhmm, connect,
            openSheet, closeSheet, openModal, closeModal, fileToCompressedDataURL,
            GENDER, genderIcon, BACKGROUNDS, DEFAULT_BG, findBg, isImageBg, isCustomBg,
-           bgStyle, resolveBg, applyBackground, shortNum, haptic, copy, vipBadge,
+           bgStyle, resolveBg, applyBackground, shortNum, haptic, copy, vipBadge, vipName,
            roomThumbStyle, roomNoClass };
 })();

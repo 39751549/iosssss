@@ -126,11 +126,23 @@ struct GiftSheet: View {
                                             lineWidth: 2.5
                                         )
                                     )
-                                Text(m.user.name)
-                                    .font(.system(size: 10.5))
-                                    .foregroundColor(targetClientId == m.clientId ? VRTheme.pink : VRTheme.textDim)
-                                    .lineLimit(1)
-                                    .frame(width: 52)
+                                if targetClientId == m.clientId {
+                                    // 选中态用品牌粉覆盖，选中反馈优先于 VIP 特权色
+                                    Text(m.user.name)
+                                        .font(.system(size: 10.5))
+                                        .foregroundColor(VRTheme.pink)
+                                        .lineLimit(1)
+                                        .frame(width: 52)
+                                } else {
+                                    VRNameText(name: m.user.name,
+                                               vip: m.user.vip,
+                                               vipLevel: m.user.vipLevel,
+                                               size: 10.5,
+                                               weight: .regular,
+                                               baseColor: VRTheme.textDim,
+                                               onLight: true)
+                                        .frame(width: 52)
+                                }
                             }
                         }
                         .buttonStyle(.plain)

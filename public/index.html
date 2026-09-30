@@ -324,7 +324,9 @@ function renderLobby() {
 
   document.getElementById('myAvatar').innerHTML = VR.avatarHtml(ME, 56);
   const vipBadge = ME.vip ? ' ' + VR.vipBadge(ME.vipLevel) : '';
-  document.getElementById('myName').innerHTML = VR.esc(ME.name) + vipBadge;
+  // 名字带 VIP 特权色；等级数字仍保留在资料卡（名片）里 —— 这是唯一显示数字的地方
+  document.getElementById('myName').innerHTML =
+    VR.vipName(ME.name, ME.vip, ME.vipLevel) + vipBadge;
   const g = VR.GENDER[ME.gender] || VR.GENDER.secret;
   document.getElementById('myMeta').innerHTML = `${VR.genderIcon(ME.gender)} ${g.label} · ID ${VR.esc(String(ME.id).slice(-6).toUpperCase())}`;
 
