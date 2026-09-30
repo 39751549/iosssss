@@ -367,7 +367,6 @@ struct RoomView: View {
         RoomStage(
             state: state,
             clientId: app.clientId,
-            vipRoom: app.isVipRoom,
             requesterId: app.songRequesterId,
             activity: app.activity,
             onTap: { handleSeatTap($0) },
@@ -443,7 +442,7 @@ struct RoomView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 7) {
                     ForEach(app.messages) { m in
-                        ChatRow(message: m) {
+                        ChatRow(message: m, ownerId: state.room.ownerId) {
                             if let cid = m.userId,
                                let member = state.members.first(where: { $0.user.id == cid }) {
                                 openCard(member)
@@ -642,8 +641,6 @@ struct RoomStage: View {
 
     let state: VRRoomState
     let clientId: String
-    /// 房主是 VIP → 房主**所在麦位**金色光环脉动
-    let vipRoom: Bool
     /// 正在播放的这首歌是谁点的（userId）
     let requesterId: String
 
@@ -661,12 +658,8 @@ struct RoomStage: View {
             HostSeatCell(
                 member: host,
                 isHost: state.isOwner(host),
-                isMine: host?.clientId == clientId,
                 speaking: speaking(host),
                 requesting: isRequester(host),
-                // 只有主位**有人**时才脉动。原来这里只判断"房主是 VIP"，
-                // 房主下麦/换到宾客位后，0 号空位上会残留一个金色光圈在转。
-                vipPulse: vipRoom && host != nil,
                 onTap: { onTap(0) },
                 onLongPress: { onLongPress(0) }
             )
@@ -686,20 +679,17 @@ struct RoomStage: View {
     /// 0 号主位。
     private var host: VRMember? { state.member(atSeat: 0) }
 
-    /// 房主坐到 1-8 号麦位时，房主标识（金环 + 皇冠 + 金色脉动）得跟着他走，
+    /// 房主坐到 1-8 号麦位时，「房」字标得跟着他走，
     /// 不然房主一离开主位就"变成普通人"了。
     @ViewBuilder
     private func guestSeat(_ seat: Int) -> some View {
         let m = state.member(atSeat: seat)
-        let isOwnerHere = state.isOwner(m)
         SeatCell(
             seat: seat,
             member: m,
-            isHost: isOwnerHere,
-            isMine: m?.clientId == clientId,
+            isHost: state.isOwner(m),
             speaking: speaking(m),
             requesting: isRequester(m),
-            vipPulse: vipRoom && isOwnerHere,
             onTap: { onTap(seat) },
             onLongPress: { onLongPress(seat) }
         )
@@ -724,14 +714,11 @@ struct RoomStage: View {
 struct SeatCell: View {
     let seat: Int
     let member: VRMember?
-    /// 房主本人就坐在这个麦位（他离开主位换到 1-8 号时，金环 + 皇冠得跟着人走）
+    /// 房主本人就坐在这个麦位（他离开主位换到 1-8 号时，名字旁的「房」标得跟着人走）
     var isHost: Bool = false
-    let isMine: Bool
     let speaking: Bool
     /// 我就是当前这首歌的点歌人 → 金色音符光环
     var requesting: Bool = false
-    /// 房主是 VIP 且就坐在这个麦位 → 常驻金色脉动光环
-    var vipPulse: Bool = false
     let onTap: () -> Void
     let onLongPress: () -> Void
 
@@ -739,34 +726,23 @@ struct SeatCell: View {
         Button(action: onTap) {
             VStack(spacing: 6) {
                 ZStack {
-                    // 三种光环互斥（和主位一致），避免同一张头像上叠两层光晕
-                    // 优先级：点歌金环 > 说话绿环 > VIP 房金色脉动
+                    // 两种光环互斥，避免同一张头像上叠两层光晕：点歌金环 > 说话绿环
                     if requesting {
                         RequestHalo(size: 62)
                     } else if speaking {
                         SpeakingHalo(size: 62, color: VRTheme.green)
-                    } else if vipPulse {
-                        RequestHalo(size: 62)
                     }
 
                     if let member {
-                        // 头像框统一由 VRAvatarFull 画：说话绿环 > 房主金环 > VIP 分色环 > 自己蓝环 > 默认白边
+                        // 头像上的环只有两种：说话绿环、已戴的头像框。
+                        // VIP 等级 / 房主身份都不再往头像上套环 —— 那些是"我是谁"，
+                        // 交给名字表达（颜色 + 流光 + 名字后的「房」标）；
+                        // 头像上的环只回答"此刻在不在说话"。
                         VRAvatarFull(user: member.user, size: 52,
-                                     isHost: isHost,
-                                     isMine: isMine,
                                      speaking: speaking,
-                                     vipLevel: member.user.vip ? member.user.vipLevel : 0,
                                      showNeutralRing: true)
-                            // 静音标放左下角，避开右下角的头像框角标位
-                            .overlay(alignment: .bottomLeading) {
-                                if member.muted {
-                                    ZStack {
-                                        Circle().fill(Color.black.opacity(0.72)).frame(width: 19, height: 19)
-                                        Text("🔇").font(.system(size: 9))
-                                    }
-                                    .offset(x: -2, y: 2)
-                                }
-                            }
+                            // 静音不再往头像上贴标 —— 头像上什么都不压，
+                            // 静音状态挪到下面名字胶囊里的小 🔇，头像变暗做辅助。
                             .opacity(member.muted ? 0.72 : 1)
                     } else {
                         ZStack {
@@ -785,12 +761,20 @@ struct SeatCell: View {
                 }
                 .frame(width: 62, height: 62)
 
-                VRNameText(name: member?.user.name ?? "空麦位",
-                           vip: member?.user.vip == true,
-                           vipLevel: member?.user.vipLevel ?? 0,
-                           size: 11,
-                           weight: member == nil ? .regular : .medium,
-                           baseColor: .white.opacity(member == nil ? 0.6 : 0.96))
+                // 静音标在名字前（头像上不放任何东西），没静音就完全不显示
+                HStack(spacing: 3) {
+                    if member?.muted == true {
+                        Text("🔇")
+                            .font(.system(size: 8.5))
+                    }
+                    VRNameText(name: member?.user.name ?? "空麦位",
+                               vip: member?.user.vip == true,
+                               vipLevel: member?.user.vipLevel ?? 0,
+                               isHost: isHost,
+                               size: 11,
+                               weight: member == nil ? .regular : .medium,
+                               baseColor: .white.opacity(member == nil ? 0.6 : 0.96))
+                }
                     .padding(.horizontal, 7)
                     .padding(.vertical, 2)
                     .background(Capsule().fill(Color.black.opacity(0.26)))
@@ -885,12 +869,9 @@ struct HostSeatCell: View {
     let member: VRMember?
     /// 坐在 0 号位的确实是房主本人（按 ownerId 比出来，防历史残留记录占了主位）
     var isHost: Bool = true
-    let isMine: Bool
     let speaking: Bool
     /// 我就是当前这首歌的点歌人 → 金色音符光环
     var requesting: Bool = false
-    /// 房主是 VIP 且坐在主位 → 常驻金色脉动光环（"VIP 房间闪闪发光"的落点之一）
-    var vipPulse: Bool = false
     let onTap: () -> Void
     let onLongPress: () -> Void
 
@@ -898,26 +879,22 @@ struct HostSeatCell: View {
         Button(action: onTap) {
             VStack(spacing: 5) {
                 ZStack(alignment: .top) {
-                    // 点歌光环（金色）—— 三种光环互斥，避免同一张头像上套三层
+                    // 点歌光环（金色）—— 两种光环互斥，避免同一张头像上套两层
                     if requesting {
                         RequestHalo(size: 74)
                     } else if speaking {
                         // 说话光环（柔和呼吸）
                         SpeakingHalo(size: 74, color: VRTheme.green)
-                    } else if vipPulse {
-                        // 房主是 VIP：没人说话时主位常驻金色脉动，点出"这是 VIP 房"
-                        RequestHalo(size: 74)
                     }
 
                     // 头像（空位时为半透明虚线圆）
                     Group {
                         if let member {
-                            // 房主的金环 + 皇冠统一交给头像框画，这里不再叠第二层
+                            // 头像上不再有房主金环 / VIP 分色环 / 皇冠：
+                            // 那些跟"开不开麦"无关，静音挂在麦上也一直亮，
+                            // 用户的感受就是"我没打开麦克风，为什么周围有光圈"。
                             VRAvatarFull(user: member.user, size: 62,
-                                         isHost: isHost,
-                                         isMine: isMine,
                                          speaking: speaking,
-                                         vipLevel: member.user.vip ? member.user.vipLevel : 0,
                                          showNeutralRing: true)
                                 .opacity(member.muted ? 0.72 : 1)
                         } else {
@@ -933,34 +910,32 @@ struct HostSeatCell: View {
                         }
                     }
                     .frame(width: 70, height: 70)
-                    // 静音标放左下角，避开右下角的头像框角标位
-                    .overlay(alignment: .bottomLeading) {
-                        if let member, member.muted {
-                            ZStack {
-                                Circle().fill(Color.black.opacity(0.72)).frame(width: 20, height: 20)
-                                Text("🔇").font(.system(size: 9))
-                            }
-                            .offset(x: -2, y: 2)
-                        }
-                    }
+                    // 静音不往头像上贴标：头像变暗 + 名字行的小 🔇（见下方）
                 }
                 .frame(width: 76, height: 78)
                 .padding(.top, 8)
 
-                // 名字胶囊（带红色"房"字标）；透明底
+                // 名字胶囊（带红色「房」字标）；透明底
                 HStack(spacing: 4) {
-                    // 空位也要挂着"房"标 —— 那是"这是主位"的标识，不是"这个人是谁"的标识。
-                    // 有人坐时只有确实是房主本人才显示（挡住异常残留记录占了主位的情况）。
-                    if member == nil || isHost {
+                    // 空位挂着「房」标 —— 那是"这里是主位"的标识，不是"这个人是谁"的标识。
+                    // 有人坐的时候「房」标由 VRNameText 挂在**名字后面**，
+                    // 和麦位 / 公屏 / 成员列表位置一致（房主换到 1-8 号麦也是同一个样子）。
+                    if member == nil {
                         Text("房")
                             .font(.system(size: 9.5, weight: .heavy))
                             .foregroundColor(.white)
                             .frame(width: 15, height: 15)
-                            .background(Circle().fill(Color(hex: "E0344C")))
+                            .background(Circle().fill(VRTheme.hostRed))
+                    }
+                    if member?.muted == true {
+                        // 静音标在名字前（头像上不放任何东西），没静音就完全不显示
+                        Text("🔇")
+                            .font(.system(size: 9))
                     }
                     VRNameText(name: member?.user.name ?? "虚位以待",
                                vip: member?.user.vip == true,
                                vipLevel: member?.user.vipLevel ?? 0,
+                               isHost: member != nil && isHost,
                                size: 11.5,
                                weight: .semibold,
                                baseColor: .white.opacity(member == nil ? 0.65 : 0.98))
@@ -984,6 +959,8 @@ struct HostSeatCell: View {
 
 struct ChatRow: View {
     let message: VRChatMessage
+    /// 房间房主的 userId —— 公屏上要认出哪条消息是房主发的，好给他挂「房」标
+    var ownerId: String = ""
     let onAvatarTap: () -> Void
 
     var body: some View {
@@ -998,8 +975,7 @@ struct ChatRow: View {
         } else {
             HStack(alignment: .top, spacing: 8) {
                 Button(action: onAvatarTap) {
-                    VRAvatarFull(user: tempUser, size: 26,
-                                 vipLevel: message.vip == true ? (message.vipLevel ?? 1) : 0)
+                    VRAvatarFull(user: tempUser, size: 26)
                 }
                 .buttonStyle(.plain)
 
@@ -1010,6 +986,7 @@ struct ChatRow: View {
                         VRNameText(name: message.name ?? "?",
                                    vip: message.vip == true,
                                    vipLevel: message.vip == true ? (message.vipLevel ?? 1) : 0,
+                                   isHost: !ownerId.isEmpty && message.userId == ownerId,
                                    size: 11.5,
                                    weight: .semibold,
                                    baseColor: nameColor,
@@ -1278,7 +1255,7 @@ struct VipChatMarqueeView: View {
 
     var body: some View {
         HStack(spacing: 9) {
-            VRAvatarFull(user: user, size: 30, vipLevel: marquee.vipLevel)
+            VRAvatarFull(user: user, size: 30)
 
             VStack(alignment: .leading, spacing: 2) {
                 // 原来这里是一个「VIP11」金色胶囊。数字撤了 —— 飘屏本身就只服务 VIP，

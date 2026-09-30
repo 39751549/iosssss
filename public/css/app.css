@@ -187,20 +187,11 @@ input, textarea { outline: none; }
 .host-seat.speaking .avatar {
   box-shadow: 0 0 0 3px var(--green), 0 0 26px rgba(56,211,159,.55);
 }
-.host-seat .host-crown {
-  position: absolute; top: -20px; left: 50%; transform: translateX(-50%) rotate(8deg);
-  font-size: 27px; filter: drop-shadow(0 3px 6px rgba(255,180,0,.55));
-  animation: crownFloat 3s ease-in-out infinite; z-index: 2;
+/* 静音标：跟在名字前，头像上不放任何东西（麦位 / 主位共用） */
+.mute-tag {
+  font-size: 9px; line-height: 1; flex: none;
+  filter: saturate(.9);
 }
-@keyframes crownFloat { 0%,100% { transform: translateX(-50%) rotate(8deg) translateY(0); } 50% { transform: translateX(-50%) rotate(4deg) translateY(-4px); } }
-.host-seat .host-crown.muted-crown { filter: grayscale(1) opacity(.7); }
-.host-seat .mic-state {
-  position: absolute; top: 2px; right: 6px; font-size: 10px;
-  width: 20px; height: 20px; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  background: rgba(0,0,0,.5); border: 1px solid rgba(255,255,255,.12); z-index: 2;
-}
-.host-seat .mic-state.muted { background: rgba(255,92,108,.85); }
 .host-seat .host-name {
   display: flex; align-items: center; gap: 5px;
   font-size: 12.5px; font-weight: 700; max-width: 150px;
@@ -210,11 +201,6 @@ input, textarea { outline: none; }
 .host-seat .host-name .hn-text {
   max-width: 100px; overflow: hidden; text-overflow: ellipsis;
 }
-.host-fang {
-  font-size: 10px; font-weight: 800; padding: 1.5px 5px; border-radius: 5px;
-  background: #FF4D5E; color: #fff; flex: none;
-}
-.host-seat .host-vip { font-size: 10px; }
 /* 空主位 */
 .host-empty {
   display: flex; flex-direction: column; align-items: center; gap: 7px;
@@ -365,6 +351,9 @@ input, textarea { outline: none; }
   box-shadow: 0 0 0 2px rgba(255,255,255,.16);
   transition: box-shadow .3s;
 }
+/* 静音：头像变暗（标在名字前，不压头像） */
+.seat.self-muted .avatar,
+.host-seat.self-muted .avatar { opacity: .72; }
 /* 空麦位：半透明圆 + 号 */
 .seat-empty-circle {
   width: 54px; height: 54px; border-radius: 50%;
@@ -374,12 +363,6 @@ input, textarea { outline: none; }
   border: 1px solid rgba(255,255,255,.1);
 }
 .seat-hint { font-size: 10px; color: var(--text-mute); }
-/* 宾客席上的房主皇冠 */
-.seat-crown {
-  position: absolute; top: -7px; left: 50%; transform: translateX(-50%);
-  font-size: 14px; filter: drop-shadow(0 1px 3px rgba(0,0,0,.5));
-  z-index: 2;
-}
 /* 房主点主位空位可回到 0 号 */
 .host-empty.can-sit { cursor: pointer; }
 .host-empty.can-sit .hc { opacity: 1; border-color: rgba(255,201,60,.7); box-shadow: 0 0 12px rgba(255,201,60,.25); }
@@ -400,14 +383,6 @@ input, textarea { outline: none; }
   font-size: 11.5px; font-weight: 600; max-width: 100%;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.seat .mic-state {
-  position: absolute; top: 0; right: calc(50% - 34px); font-size: 10px;
-  width: 19px; height: 19px; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  background: rgba(0,0,0,.5); border: 1px solid rgba(255,255,255,.12);
-  z-index: 2;
-}
-.seat .mic-state.muted { background: rgba(255,92,108,.85); }
 .seat.speaking .avatar {
   box-shadow: 0 0 0 2.5px var(--green), 0 0 20px rgba(56,211,159,.55);
 }
@@ -806,4 +781,24 @@ input, textarea { outline: none; }
 /* 系统开了「减弱动态效果」就只留静态配色 */
 @media (prefers-reduced-motion: reduce) {
   .vname.v-violet, .vname.v-aurora { animation: none; background-position: 0 0, 0 0; }
+}
+
+/* 房主标：名字后面一个小小的红「房」字。
+   原来房主靠头像上的皇冠区分，三个问题：小头像上糊成一团、只看得见名字的地方认不出、
+   房主换到 1-8 号麦后彻底失踪。字标跟着名字走，麦位 / 公屏 / 成员列表 / 名片四处一致。 */
+.vname-host {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: #E0344C;
+  color: #fff;
+  font-size: 9.5px;
+  font-weight: 800;
+  line-height: 1;
+  vertical-align: middle;
+  flex: none;
 }

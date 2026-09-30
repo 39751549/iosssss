@@ -400,9 +400,11 @@ function applyState(s) {
       el.classList.toggle('sel', !isCustomBg && el.dataset.id === s.room.background));
     updateCustomBgPreview(s.room.background);
   }
-  // 我是不是房主
+  // 我是不是房主。
+  // 用 room.ownerId 判定，不用 hostClientId —— 后者的语义是"坐在 0 号主位的是谁"，
+  // 房主换到 1-8 号麦后就认不出来了（和 iOS 端修的是同一个 bug）。
   const me = s.members.find(x => x.clientId === clientId);
-  const isHost = me && s.hostClientId === clientId;
+  const isHost = !!(me && s.room && s.room.ownerId === me.user.id);
   document.getElementById('setRoomName').disabled = !isHost;
   document.getElementById('btnDestroyRoom').style.display = isHost ? '' : 'none';
   document.getElementById('rowCustomNo').style.display = (isHost && ME && ME.vip) ? '' : 'none';
@@ -443,40 +445,37 @@ function renderSeats(s) {
   const amOwner = s.room && s.room.ownerId === USER_ID;
   if (host) {
     const speaking = speakingSet.has(host.clientId) && !host.muted;
+    const hostIsOwner = s.room && s.room.ownerId === host.user.id;
     hostRow.innerHTML = `
-      <div class="host-seat ${speaking ? 'speaking' : ''}"
+      <div class="host-seat ${speaking ? 'speaking' : ''} ${host.muted ? 'self-muted' : ''}"
            onclick="openCard('${host.clientId}')">
-        <div class="host-crown ${host.muted ? 'muted-crown' : ''}">👑</div>
-        <div class="mic-state ${host.muted ? 'muted' : ''}">${host.muted ? '🔇' : '🎤'}</div>
         ${VR.avatarHtml(host.user, 74)}
         <div class="host-name">
-          <span class="host-fang">房</span>
-          <span class="hn-text">${VR.vipName(host.user.name, host.user.vip, host.user.vipLevel)}</span>
-          ${host.user.vip ? '<span class="host-vip">👑</span>' : ''}
+          ${host.muted ? '<span class="mute-tag">🔇</span>' : ''}
+          <span class="hn-text">${VR.vipName(host.user.name, host.user.vip, host.user.vipLevel, hostIsOwner)}</span>
         </div>
       </div>`;
   } else {
     hostRow.innerHTML = `
       <div class="host-empty ${amOwner ? 'can-sit' : ''}" ${amOwner ? 'onclick="takeSeat(0)"' : ''}>
-        <div class="hc">👑</div>
+        <div class="hc">房</div>
         <div class="ht">${amOwner ? '回到主位' : '房主位'}</div>
       </div>`;
   }
 
-  /* 宾客麦位 1-8（2 行 x 4 列，半透明圆 + 号；房主坐进来时带皇冠） */
+  /* 宾客麦位 1-8（2 行 x 4 列，半透明圆 + 号） */
   let html = '';
   for (let i = 1; i <= 8; i++) {
     const m = bySeat[i];
     if (m) {
       const isMe = m.clientId === clientId;
       const speaking = speakingSet.has(m.clientId) && !m.muted;
-      const isOwnerHere = m.clientId === s.hostClientId;
-      html += `<div class="seat ${isMe ? 'mine' : ''} ${speaking ? 'speaking' : ''}"
+      // 房主标识按 ownerId 认人（跟着人走），不是按座位认
+      const isOwnerHere = !!(s.room && s.room.ownerId === m.user.id);
+      html += `<div class="seat ${isMe ? 'mine' : ''} ${speaking ? 'speaking' : ''} ${m.muted ? 'self-muted' : ''}"
                     onclick="openCard('${m.clientId}')">
-        ${isOwnerHere ? '<div class="seat-crown">👑</div>' : ''}
-        <div class="mic-state ${m.muted ? 'muted' : ''}">${m.muted ? '🔇' : '🎤'}</div>
         ${VR.avatarHtml(m.user, 54)}
-        <div class="sname">${VR.vipName(m.user.name, m.user.vip, m.user.vipLevel)}</div>
+        <div class="sname">${m.muted ? '<span class="mute-tag">🔇</span>' : ''}${VR.vipName(m.user.name, m.user.vip, m.user.vipLevel, isOwnerHere)}</div>
       </div>`;
     } else {
       html += `<div class="seat empty" onclick="takeSeat(${i})">
@@ -527,13 +526,12 @@ function applyUserUpdate(u) {
 function renderMembers(s) {  document.getElementById('memberCount').textContent = s.members.length + ' 人在房';
   const box = document.getElementById('memberList');
   box.innerHTML = s.members.map(m => {
-    const isHost = m.clientId === s.hostClientId;
+    // 房主按 ownerId 认（跟着人走），不再用 hostClientId（那是"谁坐在 0 号位"）
+    const isHost = !!(s.room && s.room.ownerId === m.user.id);
     return `<div class="member-item" onclick="openCard('${m.clientId}')">
       ${VR.avatarHtml(m.user, 40)}
       <div class="member-meta">
-        <div class="mn">${VR.vipName(m.user.name, m.user.vip, m.user.vipLevel)}
-          ${isHost ? '<span class="badge badge-blue">房主</span>' : ''}
-        </div>
+        <div class="mn">${VR.vipName(m.user.name, m.user.vip, m.user.vipLevel, isHost)}</div>
         <div class="ms">${VR.genderIcon(m.user.gender)} · ${m.seat >= 0 ? (m.seat === 0 ? '房主主位' : m.seat + ' 号麦') : '听众'} · 💖 ${VR.shortNum(m.user.charm)}</div>
       </div>
       <div style="font-size:15px;color:var(--text-mute)">${m.muted ? '🔇' : '🎤'}</div>
@@ -547,12 +545,12 @@ function openCard(cid) {
   if (!m) return;
   selTargetClientId = cid;
   const u = m.user;
-  const isHost = cid === STATE.hostClientId;
+  const isHost = !!(STATE.room && STATE.room.ownerId === u.id);
   document.getElementById('cardBody').innerHTML = `
     <div style="text-align:center">
       <div style="display:flex;justify-content:center">${VR.avatarHtml(u, 88)}</div>
       <div style="font-size:19px;font-weight:800;margin-top:12px;display:flex;align-items:center;justify-content:center;gap:6px">
-        ${VR.vipName(u.name, u.vip, u.vipLevel)}
+        ${VR.vipName(u.name, u.vip, u.vipLevel, isHost)}
         ${VR.vipBadge(u.vipLevel)}
       </div>
       <div style="font-size:12.5px;color:var(--text-dim);margin-top:7px">
@@ -636,7 +634,7 @@ function appendChat(m) {
       ${VR.avatarHtml({ id: m.userId, name: m.name, avatar: m.avatar }, 26)}
       <div class="msg-main">
         <div class="msg-head">
-          <span class="msg-name">${VR.vipName(m.name, m.vip, m.vipLevel)}</span>
+          <span class="msg-name">${VR.vipName(m.name, m.vip, m.vipLevel, !!(STATE.room && STATE.room.ownerId === m.userId))}</span>
           <span style="font-size:10px;color:var(--text-mute)">${VR.hhmm(m.at)}</span>
         </div>
         <div class="msg-bubble">${VR.esc(m.text)}</div>

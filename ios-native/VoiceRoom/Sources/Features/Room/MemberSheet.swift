@@ -95,25 +95,23 @@ struct MemberSheet: View {
         let isSpeaking = activity.speakingIds.contains(m.clientId)
 
         return HStack(spacing: 11) {
-            // 头像框（房主金环 / VIP 分色环 / 说话绿环）由头像组件统一画，
-            // 所以这里不再自己叠一圈 strokeBorder —— 那样会出现两圈环压在一起
+            // 头像上只有两种环：说话绿环、已戴的头像框（房主 / VIP 身份交给名字表达）
             VRAvatarFull(user: m.user, size: 44,
-                         isHost: isHost,
-                         isMine: m.clientId == app.clientId,
-                         speaking: isSpeaking,
-                         vipLevel: m.user.vip ? m.user.vipLevel : 0)
+                         speaking: isSpeaking)
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 5) {
                     // 等级数字不在这显示（只在名片里）。VIP 身份靠名字颜色区分。
+                    // 房主的「房」字标也挂在名字后面，不再单独给一个"房主"徽章 ——
+                    // 一个红「房」字比三个字的胶囊省地方，也和麦位 / 公屏保持同一个样子。
                     VRNameText(name: m.user.name,
                                vip: m.user.vip,
                                vipLevel: m.user.vipLevel,
+                               isHost: isHost,
                                size: 14,
                                weight: .semibold,
                                baseColor: VRTheme.text,
                                onLight: true)
-                    if isHost { VRBadge(kind: .host, text: "房主") }
                     if m.clientId == app.clientId { VRBadge(kind: .green, text: "我") }
                 }
 
@@ -282,11 +280,7 @@ struct UserCardSheet: View {
                            center: .init(x: 0.3, y: 0.2), startRadius: 0, endRadius: 230)
 
             // 大头像：封面主体（和图片里那张人物立绘位置一致）
-            VRAvatarFull(user: user, size: 104,
-                         isHost: isHost,
-                         isMine: isMe,
-                         vipLevel: user.vip ? user.vipLevel : 0,
-                         showNeutralRing: true)
+            VRAvatarFull(user: user, size: 104, showNeutralRing: true)
                 .shadow(color: .black.opacity(0.26), radius: 16, y: 8)
 
             VStack {
@@ -318,8 +312,8 @@ struct UserCardSheet: View {
 
     /// 右上角勋章排（对应图片里名字上方那一排小圆章）
     ///
-    /// 房主那枚 `house.fill` 删掉了：房主的皇冠和金环现在由头像框统一画，
-    /// 再挂一枚"房子"章就是同一个身份说两遍，也让头像框的视觉没有落点。
+    /// 房主那枚 `house.fill` 删掉了：房主现在只由名字后面的红「房」字标表达，
+    /// 名片上再加一枚"房子"章就是同一个身份说两遍。
     private var medals: some View {
         HStack(spacing: 6) {
             if user.vip {
@@ -362,11 +356,7 @@ struct UserCardSheet: View {
 
     private var identityRow: some View {
         HStack(spacing: 12) {
-            VRAvatarFull(user: user, size: 54,
-                         isHost: isHost,
-                         isMine: isMe,
-                         vipLevel: user.vip ? user.vipLevel : 0,
-                         showNeutralRing: true)
+            VRAvatarFull(user: user, size: 54, showNeutralRing: true)
                 .shadow(color: .black.opacity(0.14), radius: 7, y: 3)
 
             VStack(alignment: .leading, spacing: 5) {
@@ -376,6 +366,7 @@ struct UserCardSheet: View {
                     VRNameText(name: user.name,
                                vip: user.vip,
                                vipLevel: user.vipLevel,
+                               isHost: isHost,
                                size: 18,
                                weight: .bold,
                                baseColor: VRTheme.text,

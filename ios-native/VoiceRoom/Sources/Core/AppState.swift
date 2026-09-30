@@ -31,6 +31,14 @@ final class AppState: ObservableObject {
     @Published var ownedFrames: [String] = []
     /// 是否正在买 / 切换头像框（按钮转圈用）
     @Published var frameBusy = false
+    /// 有没有成功拿到过商城清单。
+    /// 光靠 `shopFrames.isEmpty` 判断"还在加载"是不行的 —— 拉失败了它也空，
+    /// 界面就会永远转圈、还一声不吭（这正是"商城一直显示正在读取"的表现）。
+    @Published var shopLoaded = false
+    /// 这次拉取失败了（显示"加载失败，点这里重试"，而不是无限转圈）
+    @Published var shopFailed = false
+    /// 商城拉取的兜底定时器：5 秒还没收到回包就判失败
+    private var shopTimeout: DispatchWorkItem?
 
     // MARK: 当前房间
     @Published var roomState: VRRoomState?
@@ -284,6 +292,9 @@ final class AppState: ObservableObject {
             shopFrames = frames
             ownedFrames = owned
             frameBusy = false
+            shopLoaded = true
+            shopFailed = false
+            shopTimeout?.cancel()
             VRFrameCatalog.shared.setFrames(frames)
             // 服务端才是背包/穿戴的权威，顺手把本地资料对齐
             if me?.frame != wearing { me?.frame = wearing }
@@ -427,6 +438,9 @@ final class AppState: ObservableObject {
             showToast(msg, kind: .error)
             // 买框 / 换框失败时要把按钮解锁，否则会一直转圈
             frameBusy = false
+            // 商城还没成功加载过就报错 → 标记失败。
+            // 不然 ShopSheet 分不清"还在加载"和"已经失败了"，会永远停在"正在读取头像框…"。
+            if !shopLoaded { shopFailed = true }
 
         case .unknown:
             break
@@ -448,8 +462,19 @@ final class AppState: ObservableObject {
     // MARK: - 头像框（商城 / 背包）
 
     /// 拉商城清单 + 我的背包 + 当前穿戴 + 金币余额（商城页 / 背包页打开时调）
+    ///
+    /// 带 5 秒兜底：万一这条消息丢了 / 服务端换了协议没回包，
+    /// 也要让界面显示"加载失败"而不是无限转圈 —— 用户至少知道该重试。
     func requestShop() {
+        shopFailed = false
         connection.send(.shopList)
+        shopTimeout?.cancel()
+        let task = DispatchWorkItem { [weak self] in
+            guard let self, !self.shopLoaded else { return }
+            self.shopFailed = true
+        }
+        shopTimeout = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: task)
     }
 
     /// 用金币买头像框：服务端校验余额并扣钱，买完自动戴上（买框就是为了戴）

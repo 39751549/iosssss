@@ -116,10 +116,7 @@ struct GiftSheet: View {
                             targetClientId = m.clientId
                         } label: {
                             VStack(spacing: 5) {
-                                VRAvatarFull(user: m.user, size: 42,
-                                             isMine: m.clientId == app.clientId,
-                                             vipLevel: m.user.vip ? m.user.vipLevel : 0,
-                                             showNeutralRing: true)
+                                VRAvatarFull(user: m.user, size: 42, showNeutralRing: true)
                                     .overlay(
                                         Circle().strokeBorder(
                                             targetClientId == m.clientId ? VRTheme.pink : .clear,

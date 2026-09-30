@@ -320,6 +320,23 @@ function sha256(s) {
   return crypto.createHash('sha256').update(String(s), 'utf8').digest('hex');
 }
 
+/**
+ * 这条消息该操作哪个用户。
+ *
+ * 优先用**连接自己的身份**：auth 成功后服务端就把 userId 记在 `ws.authUserId` 上。
+ * 这比让客户端每次在消息里塞一份可信得多 —— 否则改个 userId 就能花别人的金币。
+ * `msg.userId` 只作兜底（尚未 auth 的连接 / 老客户端）。
+ *
+ * 这个函数是为修「商城和背包一直转圈」加的：`shop:list` / `shop:buy` / `frame:wear`
+ * 原来只认 `msg.userId`，而客户端 payload 里压根没带这个字段，
+ * 于是每次都回「请先登录」，商城清单永远是空数组 —— 界面就卡在"正在读取头像框…"，
+ * 永远是转圈，也不会报错（收到的只是个 toast）。
+ */
+function currentUser(ws, msg) {
+  const uid = (ws && ws.authUserId) || safeStr(msg && msg.userId, 40);
+  return uid ? (store.users[uid] || null) : null;
+}
+
 function publicUser(u) {
   if (!u) return null;
   // 防御式输出：任何字段缺失/脏类型都兜底，保证客户端解析永不失败
@@ -1378,7 +1395,7 @@ wss.on('connection', (ws) => {
 
       /* 商城列表 + 我的背包 + 当前穿戴 + 金币余额（一次拿全，商城页只发一条请求） */
       case 'shop:list': {
-        const u = store.users[safeStr(msg.userId, 40)];
+        const u = currentUser(ws, msg);
         if (!u) return reply({ type: 'error', msg: '请先登录' });
         return reply({ type: 'shop:list', data: {
           frames: store.config.avatarFrames || [],
@@ -1390,7 +1407,7 @@ wss.on('connection', (ws) => {
 
       /* 买头像框：扣金币 → 进背包 → 顺手戴上（买框就是为了戴，省一步操作） */
       case 'shop:buy': {
-        const u = store.users[safeStr(msg.userId, 40)];
+        const u = currentUser(ws, msg);
         if (!u) return reply({ type: 'error', msg: '请先登录' });
         const f = (store.config.avatarFrames || []).find(x => x.id === safeStr(msg.frameId, 30));
         if (!f) return reply({ type: 'error', msg: '头像框不存在' });
@@ -1414,7 +1431,7 @@ wss.on('connection', (ws) => {
 
       /* 穿戴 / 脱下头像框（frameId 传空串 = 脱下） */
       case 'frame:wear': {
-        const u = store.users[safeStr(msg.userId, 40)];
+        const u = currentUser(ws, msg);
         if (!u) return reply({ type: 'error', msg: '请先登录' });
         const id = safeStr(msg.frameId, 30);
         if (id) {

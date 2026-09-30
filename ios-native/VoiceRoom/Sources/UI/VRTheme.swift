@@ -21,6 +21,8 @@ enum VRTheme {
     static let gold        = Color(hex: "FFB53C")
     static let green       = Color(hex: "3ECFA0")
     static let red         = Color(hex: "FF6B7D")
+    /// 房主标识的红（名字后面的「房」字标）
+    static let hostRed     = Color(hex: "E0344C")
 
     // MARK: 渐变
     static let brandGradient = LinearGradient(

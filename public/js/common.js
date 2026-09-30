@@ -224,13 +224,18 @@ const VR = (() => {
     { min: 5,  cls: 'v-gold'   },   // 金色
     { min: 1,  cls: 'v-silver' },   // 银蓝
   ];
-  /** 带 VIP 特权的名字。非 VIP 原样返回（不含任何包裹） */
-  function vipName(name, vip, level) {
+  /** 带 VIP 特权的名字。非 VIP 原样返回（不含任何包裹）
+   *
+   *  isHost = 房主 → 名字后面跟一个红「房」字标。
+   *  房主原来靠头像上的皇冠区分，小头像上糊成一团、房主换到普通麦位更是认不出来；
+   *  字标跟着名字走，麦位 / 公屏 / 成员列表 / 名片四处一致。 */
+  function vipName(name, vip, level, isHost) {
     const lv = Math.max(0, Math.min(12, Number(level) || 0));
-    if (!vip && lv <= 0) return esc(name);
+    const hostTag = isHost ? '<span class="vname-host">房</span>' : '';
+    if (!vip && lv <= 0) return esc(name) + hostTag;
     const t = VNAME_TIERS.find(x => lv >= x.min);
-    if (!t) return esc(name);
-    return `<span class="vname ${t.cls}">${esc(name)}</span>`;
+    if (!t) return esc(name) + hostTag;
+    return `<span class="vname ${t.cls}">${esc(name)}</span>` + hostTag;
   }
 
   function vipBadge(level, small) {

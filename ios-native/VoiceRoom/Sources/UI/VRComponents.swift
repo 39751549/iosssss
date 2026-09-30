@@ -92,15 +92,8 @@ struct VRAvatarFull: View {
 
     // MARK: 头像框参数
 
-    /// 房主 → 金色环 + 顶部皇冠
-    var isHost: Bool = false
-    /// 我自己 → 品牌蓝环
-    var isMine: Bool = false
-    /// 正在说话 → 绿色环
+    /// 正在说话 → 绿色环（唯一一个"当下状态"环）
     var speaking: Bool = false
-    /// VIP 等级（0 表示非 VIP）→ 按等级给头像环分色。
-    /// 等级**数字**不在这里显示 —— 只在名片里出现，其余地方靠名字的颜色/流光表达身份。
-    var vipLevel: Int = 0
     /// 以上都不适用时，要不要画一圈默认的白色描边（麦位在背景图上需要它来分离边缘；列表里不需要）
     var showNeutralRing: Bool = false
 
@@ -130,8 +123,9 @@ struct VRAvatarFull: View {
         // 头像框外发光（只有标了 glow 的框才有；其余返回 .clear 等于没画）
         .shadow(color: frameGlowColor, radius: frameGlowRadius)
         .overlay { ringView }
-        .overlay(alignment: .top) { crownBadge }
-        .overlay(alignment: .topLeading) { frameBadge }
+        // 头像上**什么都不压**：皇冠、等级章、框角标、静音标全部撤掉。
+        // 这类 App 最好看的就是头像本身，任何角标都是在给脸打码；
+        // 身份 / 状态一律交给头像外的元素表达（名字颜色、「房」标、名字行的静音标）。
         .onAppear(perform: loadIfNeeded)
         .onChange(of: user?.avatar) { _ in
             image = nil
@@ -163,47 +157,29 @@ struct VRAvatarFull: View {
         return max(5, size * 0.16)
     }
 
-    /// 头像框角标（左上角）：顶部被皇冠占了，这里挂角标，两个不打架
-    @ViewBuilder
-    private var frameBadge: some View {
-        if let b = frame?.badge, !b.isEmpty, size >= 30 {
-            Text(b)
-                .font(.system(size: max(10, size * 0.26)))
-                .offset(x: size * 0.15, y: -size * 0.09)
-                .shadow(color: .black.opacity(0.22), radius: 2, y: 1)
-        }
-    }
 
-    /// 环的配色。优先级：正在说话 > 已穿戴的头像框 > 房主 > VIP > 我自己 > 默认白边。
-    /// 只取一个，不叠加 —— 叠起来一圈套一圈，小头像上会糊成一坨。
+    /// 环的配色。
+    ///
+    /// **只有两种环**：正在说话（绿）、已穿戴的头像框（买来的）。其余返回白描边或 nil。
+    ///
+    /// 这里原来是"说话 > 头像框 > 房主金环 > VIP 分色环 > 我自己蓝环 > 白边"，
+    /// 问题是后面那三种都是**身份**环：跟人在不在麦上、有没有说话毫无关系，
+    /// 于是哪怕静音、哪怕只是挂在房间里，头像也一直顶着一圈彩色光 ——
+    /// 用户的原话是"我没打开麦克风，为什么周围显示光圈"。
+    ///
+    /// 现在的分工：**环表达"此刻在做什么"（说话），名字表达"我是谁"**
+    /// （VIP 等级 → 名字颜色 / 流光；房主 → 名字后面的「房」字标）。
+    /// 两者不再互相重复，也就不会到处冒光圈了。
     private var ringColors: [Color]? {
         if speaking { return [VRTheme.green, Color(hex: "22A97C")] }
-        // 花钱买的头像框排第二：买了看不见等于没买。
-        // 房主 / VIP 身份不会因此丢失 —— 皇冠和右下角等级徽章照样在。
+        // 花钱买的头像框：买了看不见等于没买，这个留住
         if let f = frame {
             let cs = f.colors.compactMap { Color(hex: $0) }
             if cs.count >= 2 { return cs }
             if let only = cs.first { return [only, only] }
         }
-        if isHost { return [Color(hex: "FFE08A"), Color(hex: "FF9F1C")] }
-        if vipLevel > 0 { return Self.vipRingColors(vipLevel) }
-        if isMine { return [VRTheme.brand, Color(hex: "6FC4FF")] }
         if showNeutralRing { return [Color.white.opacity(0.62), Color.white.opacity(0.42)] }
         return nil
-    }
-
-    /// VIP 分档配色，和服务端的 VIP 阶梯对齐：
-    /// 1-3 银蓝 / 4-6 紫 / 7-10 金 / 11+ 三色（粉金蓝）
-    ///
-    /// 11 级以上给三色，和 `VRNameTier.aurora` 对齐：同一个人头像环和名字
-    /// 用同一套色系，"顶配"的视觉一致性才立得住。
-    private static func vipRingColors(_ level: Int) -> [Color] {
-        switch level {
-        case ..<4:   return [Color(hex: "CFE6FF"), Color(hex: "6FA8FF")]
-        case 4...6:  return [Color(hex: "D9B3FF"), Color(hex: "8E5BFF")]
-        case 7...10: return [Color(hex: "FFE08A"), Color(hex: "FF9F1C")]
-        default:     return [Color(hex: "FF7FAE"), Color(hex: "FFD86B"), Color(hex: "7ED0FF")]
-        }
     }
 
     @ViewBuilder
@@ -214,20 +190,9 @@ struct VRAvatarFull: View {
                     LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing),
                     lineWidth: max(1.6, size * 0.045)
                 )
-                // VIP / 房主的环加一点发光，看起来"bling bling"
-                .shadow(color: (colors.last ?? .clear).opacity(vipLevel > 0 || isHost ? 0.55 : 0),
-                        radius: 4)
-        }
-    }
-
-    /// 房主皇冠（压在头像顶部）
-    @ViewBuilder
-    private var crownBadge: some View {
-        if isHost && size >= 38 {
-            Text("👑")
-                .font(.system(size: max(11, size * 0.26)))
-                .offset(y: -max(6, size * 0.14))
-                .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
+                // 只有说话绿灯那圈发光（有呼吸感）；白描边保持素净，
+                // 它只是为了让头像在背景图上不糊掉，不是装饰
+                .shadow(color: (colors.last ?? .clear).opacity(speaking ? 0.55 : 0), radius: 4)
         }
     }
 
@@ -516,6 +481,13 @@ struct VRNameText: View {
     let name: String
     var vip: Bool = false
     var vipLevel: Int = 0
+    /// 这个人是不是房主 → 名字后面跟一个红「房」字标。
+    ///
+    /// 房主原来靠头像顶上的皇冠区分，三个问题：小头像上皇冠糊成一团、
+    /// 只看得见头像看不见名字的地方就认不出、房主换到 1-8 号麦后更是彻底失踪。
+    /// 名字后面的字标在麦位 / 公屏 / 成员列表 / 名片四处都跟着人走，
+    /// 而且"谁在说话"和"谁是房主"这两件事从此各用各的表达方式，不会打架。
+    var isHost: Bool = false
     var size: CGFloat = 11.5
     var weight: Font.Weight = .semibold
     /// 非 VIP 的底色
@@ -531,6 +503,17 @@ struct VRNameText: View {
     private var font: Font { .system(size: size, weight: weight) }
 
     var body: some View {
+        HStack(spacing: max(3, size * 0.26)) {
+            nameLabel
+            if isHost { hostTag }
+        }
+        .lineLimit(lineLimit)
+        .minimumScaleFactor(0.75)
+        .onAppear(perform: startShine)
+    }
+
+    @ViewBuilder
+    private var nameLabel: some View {
         Group {
             if tier == .plain {
                 Text(name)
@@ -547,9 +530,17 @@ struct VRNameText: View {
                     .shadow(color: glowColor, radius: glowRadius)
             }
         }
-        .lineLimit(lineLimit)
-        .minimumScaleFactor(0.75)
-        .onAppear(perform: startShine)
+    }
+
+    /// 红「房」字标（和主位空位那个「房」标同色同形，视觉上是同一个东西）
+    private var hostTag: some View {
+        Text("房")
+            .font(.system(size: max(7.5, size * 0.72), weight: .heavy))
+            .foregroundColor(.white)
+            .frame(width: max(13, size * 1.3), height: max(13, size * 1.3))
+            .background(Circle().fill(VRTheme.hostRed))
+            // 别被外面那层 lineLimit / minimumScaleFactor 压扁
+            .fixedSize()
     }
 
     private var glowColor: Color { tier.glow(onLight: onLight)?.0 ?? .clear }

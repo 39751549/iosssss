@@ -39,7 +39,9 @@ struct ShopSheet: View {
                         walletCard
 
                         if app.shopFrames.isEmpty {
-                            loadingHint
+                            // "空"有两种可能：还在路上，或者已经失败了。
+                            // 不区分就会永远转圈、还不告诉你为什么。
+                            if app.shopFailed { failedHint } else { loadingHint }
                         } else {
                             grid(mode == .shop ? shopList : backpackList)
                         }
@@ -137,6 +139,29 @@ struct ShopSheet: View {
         .padding(.top, 40)
     }
 
+    /// 拉取失败（网络断了 / 服务端没回包）：给个能点的重试，别让人干等
+    private var failedHint: some View {
+        Button { app.requestShop() } label: {
+            VStack(spacing: 9) {
+                Text("😕")
+                    .font(.system(size: 26))
+                Text("头像框没加载出来")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(VRTheme.text)
+                Text("点这里重试")
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundColor(VRTheme.brand)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 28)
+            .background(
+                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                    .fill(Color(hex: "27436B").opacity(0.06))
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
     // MARK: - 列表
 
     /// 商城：全部商品，便宜的排前面
@@ -168,10 +193,7 @@ struct ShopSheet: View {
 
         return VStack(spacing: 7) {
             // 预览：拿我自己的头像套上这个框，所见即所得
-            VRAvatarFull(user: previewUser(f.id), size: 54,
-                         isMine: true,
-                         vipLevel: app.me?.vip == true ? (app.me?.vipLevel ?? 1) : 0,
-                         showNeutralRing: true)
+            VRAvatarFull(user: previewUser(f.id), size: 54, showNeutralRing: true)
                 .frame(height: 62)
 
             Text(f.name)
