@@ -82,6 +82,13 @@ function pngInfo(buf) {
   return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20), colorType: buf[25] };
 }
 
+/** WebP 检查：RIFF/WEBP 魔数 + VP8X（扩展容器）+ ANIM 块存在（说明是动画） */
+function webpInfo(buf) {
+  if (buf.length < 30 || buf.toString('ascii', 0, 4) !== 'RIFF' || buf.toString('ascii', 8, 12) !== 'WEBP') return null;
+  const hasAnim = buf.toString('ascii', 12, 16) === 'VP8X' && buf.includes(Buffer.from('ANIM'));
+  return { animated: hasAnim };
+}
+
 async function main() {
   /* 准备数据目录：预置一份「旧清单」store.json（没有 img 框），验证 union 合并 */
   fs.rmSync(DATA_DIR, { recursive: true, force: true });
@@ -124,14 +131,20 @@ async function main() {
     ok(list && list.type === 'shop:list', 'shop:list 有回包');
     const frames = (list.data && list.data.frames) || [];
     const byId = Object.fromEntries(frames.map(f => [f.id, f]));
-    ok(frames.length >= oldFrames.length + 3, `新商品被补进旧清单（共 ${frames.length} 个）`);
+    ok(frames.length >= oldFrames.length + 8, `新商品被补进旧清单（共 ${frames.length} 个）`);
     ok(!!byId.classic && !!byId.sakura && !!byId.royal, '旧商品原样保留（顺序/价格不动）');
 
-    console.log('\n== A2. 图片头像框字段 ==');
+    console.log('\n== A2. 图片/动画头像框字段 ==');
     const IMG_FRAMES = [
       { id: 'rainbow', img: '/frames/frame-rainbow.png' },
       { id: 'goldwhale', img: '/frames/frame-goldwhale.png' },
-      { id: 'koi', img: '/frames/frame-koi.png' }
+      { id: 'koi', img: '/frames/frame-koi.png' },
+      // 动画框：SVGA 预合成的 animated WebP
+      { id: 'dream', img: '/frames/frame-anim-dream.webp' },
+      { id: 'balloon', img: '/frames/frame-anim-balloon.webp' },
+      { id: 'hearts', img: '/frames/frame-anim-hearts.webp' },
+      { id: 'feather', img: '/frames/frame-anim-feather.webp' },
+      { id: 'wings', img: '/frames/frame-anim-wings.webp' }
     ];
     for (const want of IMG_FRAMES) {
       const f = byId[want.id];
@@ -145,12 +158,18 @@ async function main() {
     console.log('\n== A3. 素材静态服务 ==');
     for (const want of IMG_FRAMES) {
       const r = await get(want.img);
-      ok(r.status === 200 && /image\/png/.test(r.type), `GET ${want.img} → 200 image/png`);
-      const info = pngInfo(r.buf);
-      ok(!!info, `${want.id} 是合法 PNG`);
-      if (info) {
-        ok(info.w === 264 && info.h === 264, `${want.id} 尺寸 264x264（实为 ${info.w}x${info.h}）`);
-        ok(info.colorType === 6, `${want.id} 是 RGBA（带透明通道，colorType=${info.colorType}）`);
+      ok(r.status === 200 && /^image\/(png|webp)/.test(r.type), `GET ${want.img} → 200 ${r.type}`);
+      if (want.img.endsWith('.png')) {
+        const info = pngInfo(r.buf);
+        ok(!!info, `${want.id} 是合法 PNG`);
+        if (info) {
+          ok(info.w === 264 && info.h === 264, `${want.id} 尺寸 264x264（实为 ${info.w}x${info.h}）`);
+          ok(info.colorType === 6, `${want.id} 是 RGBA（带透明通道，colorType=${info.colorType}）`);
+        }
+      } else {
+        const info = webpInfo(r.buf);
+        ok(!!info, `${want.id} 是合法 WebP`);
+        if (info) ok(info.animated, `${want.id} 是动画 WebP（含 ANIM 块）`);
       }
       ok(r.buf.length > 10000, `${want.id} 内容非空（${r.buf.length} B）`);
     }
@@ -196,6 +215,7 @@ async function main() {
     ok(/var img: String\?/.test(models), 'VRAvatarFrame 有 img 字段');
     const comp = fs.readFileSync(path.join(ROOT, 'ios-native/VoiceRoom/Sources/UI/VRComponents.swift'), 'utf8');
     ok(/frameArtView/.test(comp), 'VRAvatarFull 有图片框渲染（frameArtView）');
+    ok(/ui\.images != nil/.test(comp), '动画框走 GIFImageView 逐帧播放');
     ok(/loadFrameArtIfNeeded/.test(comp), '有素材加载逻辑（loadFrameArtIfNeeded）');
     ok(/onChange\(of: user\?\.frame\)/.test(comp), '换框会触发素材重载');
     ok(/onChange\(of: frameImageKey\)/.test(comp), '商城清单晚到时会补加载素材');

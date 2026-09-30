@@ -184,13 +184,22 @@ final class MediaCache: NSObject {
             ?? CGImageSourceCreateImageAtIndex(src, index, nil)
     }
 
-    /// 单帧延时（GIF 帧延时为百分之一秒）
+    /// 单帧延时（GIF 帧延时为百分之一秒）。
+    /// Animated WebP（iOS 14+ ImageIO 原生支持）与 APNG 的帧延时同样从属性里取，
+    /// 读不到时退 0.1s —— 动图稍慢一点也比卡死强。
     private static func frameDelay(_ src: CGImageSource, _ index: Int) -> Double {
-        guard let props = CGImageSourceCopyPropertiesAtIndex(src, index, nil) as? [String: Any],
-              let gif = props[kCGImagePropertyGIFDictionary as String] as? [String: Any] else { return 0.1 }
-        let delay = (gif[kCGImagePropertyGIFUnclampedDelayTime as String] as? Double)
-            ?? (gif[kCGImagePropertyGIFDelayTime as String] as? Double) ?? 0.1
-        return delay < 0.02 ? 0.1 : delay
+        guard let props = CGImageSourceCopyPropertiesAtIndex(src, index, nil) as? [String: Any] else { return 0.1 }
+        let gif = props[kCGImagePropertyGIFDictionary as String] as? [String: Any]
+        if let delay = (gif?[kCGImagePropertyGIFUnclampedDelayTime as String] as? Double)
+            ?? (gif?[kCGImagePropertyGIFDelayTime as String] as? Double) {
+            return delay < 0.02 ? 0.1 : delay
+        }
+        // APNG：delay 存在 PNG 字典的 APNGDelay / APNGLoopCount 旁
+        if let png = props[kCGImagePropertyPNGDictionary as String] as? [String: Any],
+           let delay = png["APNGDelay"] as? Double {
+            return delay < 0.02 ? 0.1 : delay
+        }
+        return 0.1
     }
 
     /// 解码后占用的字节数（用于 NSCache 的 cost 记账，超限时优先淘汰大图）

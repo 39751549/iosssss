@@ -204,15 +204,21 @@ struct VRAvatarFull: View {
 
     /// 图片头像框：服务端下发的整张素材（264x264、中心透明），
     /// 按 1:1 叠在头像上，贴边环绕不遮脸。
+    /// 静态 PNG 直接画；动图（SVGA 预合成的 WebP/GIF，多帧 UIImage）走 UIImageView 播放。
     @ViewBuilder
     private var frameArtView: some View {
         if let ui = frameImage {
-            Image(uiImage: ui)
-                .resizable()
-                .frame(width: size, height: size)
-                // 说话状态在图片框上的表达：环会被框图盖住，改用一圈绿光
-                .shadow(color: speaking ? VRTheme.green.opacity(0.6) : .clear,
-                        radius: speaking ? max(4, size * 0.12) : 0)
+            Group {
+                if ui.images != nil {
+                    GIFImageView(image: ui, contentMode: .scaleAspectFit)
+                } else {
+                    Image(uiImage: ui).resizable()
+                }
+            }
+            .frame(width: size, height: size)
+            // 说话状态在图片框上的表达：环会被框图盖住，改用一圈绿光
+            .shadow(color: speaking ? VRTheme.green.opacity(0.6) : .clear,
+                    radius: speaking ? max(4, size * 0.12) : 0)
         }
     }
 

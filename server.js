@@ -193,7 +193,16 @@ const DEFAULT_CONFIG = {
     { id: 'goldwhale', name: '金月鲸', price: 20000, colors: ['FFE89A', 'FFD34E'], img: '/frames/frame-goldwhale.png',  tier: 'legend', glow: true },
     { id: 'royal',   name: '皇冠金', price: 30000, colors: ['FFE89A', 'FF9F1C'],   badge: '👑', tier: 'legend', glow: true },
     { id: 'aurora',  name: '极光',   price: 80000, colors: ['FF9AC8', 'FFD86B', '7ED0FF'], badge: '🌈', tier: 'legend', glow: true },
-    { id: 'koi',     name: '锦鲤',   price: 88888, colors: ['4FC3F7', '7C4DFF'],   img: '/frames/frame-koi.png',        tier: 'legend', glow: true }
+    { id: 'koi',     name: '锦鲤',   price: 88888, colors: ['4FC3F7', '7C4DFF'],   img: '/frames/frame-koi.png',        tier: 'legend', glow: true },
+    /*
+     * 动画头像框：SVGA 素材在本地预合成为 animated WebP（保完整透明、体积小），
+     * iOS 走现成的 ImageIO 动图通道逐帧播放。img 以 .webp 结尾即为动画框。
+     */
+    { id: 'dream',   name: '甜梦彩虹', price: 18888, colors: ['FF9AE8', 'B98CFF'], img: '/frames/frame-anim-dream.webp',   tier: 'legend', glow: true },
+    { id: 'balloon', name: '云朵漫游', price: 28888, colors: ['B98CFF', '7ED0FF'], img: '/frames/frame-anim-balloon.webp', tier: 'legend', glow: true },
+    { id: 'hearts',  name: '钻石甜心', price: 38888, colors: ['9AB8FF', '7C9BFF'], img: '/frames/frame-anim-hearts.webp',  tier: 'legend', glow: true },
+    { id: 'feather', name: '冰晶羽翼', price: 58888, colors: ['8FDCFF', '4A8FFF'], img: '/frames/frame-anim-feather.webp', tier: 'legend', glow: true },
+    { id: 'wings',   name: '炽天使',   price: 98888, colors: ['D9A8FF', 'FFE89A'], img: '/frames/frame-anim-wings.webp',   tier: 'legend', glow: true }
   ]
 };
 
