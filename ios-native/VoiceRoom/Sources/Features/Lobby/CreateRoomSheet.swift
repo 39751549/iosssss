@@ -77,6 +77,9 @@ struct CreateRoomSheet: View {
 /// 内置背景与自定义背景都能显示真实图片；取不到图时只留渐变底，不会空一块白。
 struct RoomBackgroundThumb: View {
     let background: String
+    /// 房间头像（房主上传，圆形/圆角展示）。有头像就优先用它 ——
+    /// 那才是这个房间的"门面"，背景图经常是一大张风景，缩到 44pt 根本认不出是哪个房。
+    var avatar: String?
     let size: CGFloat
     var corner: CGFloat = 13
 
@@ -85,7 +88,17 @@ struct RoomBackgroundThumb: View {
             LinearGradient(colors: VRTheme.background(for: background),
                            startPoint: .topLeading, endPoint: .bottomTrailing)
 
-            if let url = VRConfig.absoluteURL(for: background) {
+            if let url = avatarURL {
+                CachedAsyncImage(url: url, profile: .thumb) { phase in
+                    if case let .success(img) = phase {
+                        Image(uiImage: img)
+                            .resizable()
+                            .scaledToFill()
+                    } else {
+                        Color.clear
+                    }
+                }
+            } else if let url = VRConfig.absoluteURL(for: background) {
                 // .thumb 档：只解第一帧，列表滚动不占内存
                 CachedAsyncImage(url: url, profile: .thumb) { phase in
                     if case let .success(img) = phase {
@@ -100,6 +113,11 @@ struct RoomBackgroundThumb: View {
         }
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
+    }
+
+    private var avatarURL: URL? {
+        guard let a = avatar, !a.isEmpty else { return nil }
+        return VRConfig.absoluteURL(for: a)
     }
 }
 

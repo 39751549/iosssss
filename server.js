@@ -172,6 +172,21 @@ const DEFAULT_CONFIG = {
     { id: 'crown',  name: '皇冠', emoji: '👑', price: 500,  charm: 500 },
     { id: 'sport',  name: '跑车', emoji: '🏎️', price: 1000, charm: 1000 },
     { id: 'castle', name: '城堡', emoji: '🏰', price: 5000, charm: 5000 }
+  ],
+  /*
+   * 头像框商城。加新头像框只要往这个数组里加一条 —— 客户端是通用的
+   * 「渐变环 + 角标 + 可选外发光」渲染器，不用改代码也不用发版。
+   * price = 0 是默认框（人人都有，不占背包位）。
+   */
+  avatarFrames: [
+    { id: 'classic', name: '云白',   price: 0,     colors: ['FFFFFF', 'CFE0F5'],                     tier: 'normal' },
+    { id: 'sakura',  name: '樱吹雪', price: 800,   colors: ['FFC2DC', 'FF7FAE'],   badge: '🌸', tier: 'normal' },
+    { id: 'ocean',   name: '深海',   price: 1500,  colors: ['8FDCFF', '3FA9F5'],   badge: '🌊', tier: 'rare'   },
+    { id: 'clover',  name: '四叶草', price: 2500,  colors: ['A8EFB6', '3ECFA0'],   badge: '🍀', tier: 'rare'   },
+    { id: 'flame',   name: '烈焰',   price: 5000,  colors: ['FFB56B', 'FF5A3C'],   badge: '🔥', tier: 'epic',   glow: true },
+    { id: 'galaxy',  name: '星河',   price: 12000, colors: ['A98CFF', '4A3FFF'],   badge: '✨', tier: 'epic',   glow: true },
+    { id: 'royal',   name: '皇冠金', price: 30000, colors: ['FFE89A', 'FF9F1C'],   badge: '👑', tier: 'legend', glow: true },
+    { id: 'aurora',  name: '极光',   price: 80000, colors: ['FF9AC8', 'FFD86B', '7ED0FF'], badge: '🌈', tier: 'legend', glow: true }
   ]
 };
 
@@ -189,6 +204,10 @@ function loadStore() {
       store.library = Array.isArray(raw.library) ? raw.library : [];
       store.config = Object.assign({}, DEFAULT_CONFIG, raw.config || {});
       if (!Array.isArray(store.config.giftList) || !store.config.giftList.length) store.config.giftList = DEFAULT_CONFIG.giftList;
+      // 老数据没有头像框清单 → 补上默认的，否则商城是空的
+      if (!Array.isArray(store.config.avatarFrames) || !store.config.avatarFrames.length) {
+        store.config.avatarFrames = DEFAULT_CONFIG.avatarFrames;
+      }
     }
   } catch (e) { console.error('[store] 读取失败:', e.message); }
   // 预置管理员账号 admin / admin
@@ -309,7 +328,10 @@ function publicUser(u) {
            bio: typeof u.bio === 'string' ? u.bio : '',
            coins: Number.isInteger(u.coins) ? u.coins : 0,
            charm: Number.isInteger(u.charm) ? u.charm : 0,
-           vip: !!u.vip, vipLevel: Number.isInteger(u.vipLevel) ? u.vipLevel : 0 };
+           vip: !!u.vip, vipLevel: Number.isInteger(u.vipLevel) ? u.vipLevel : 0,
+           // 当前穿戴的头像框 id（空 = 不戴）。背包列表不在这里下发 ——
+           // 只有自己需要看到背包，走 shop:list 单独取，避免每个成员快照都驮一份数组。
+           frame: typeof u.frame === 'string' ? u.frame : '' };
 }
 
 /* ================= VIP 等级（与刷礼物得到的魅力值挂钩） ================= */
@@ -403,7 +425,9 @@ function roomSnapshot(roomId) {
   const host = (seats[0] && rt.members.get(seats[0])) ||
                members.find(m => m.user && m.user.id === room.ownerId);
   return {
-    room: { id: room.id, name: room.name, no: room.no, background: room.background, ownerId: room.ownerId },
+    room: { id: room.id, name: room.name, no: room.no, background: room.background,
+            avatar: room.avatar || '', ownerId: room.ownerId,
+            ownerVip: !!(store.users[room.ownerId] && store.users[room.ownerId].vip) },
     members, seats,
     hostClientId: host ? host.clientId : (members[0] ? members[0].clientId : null),
     playlist: rt.playlist, currentSong: rt.currentSong, playing: rt.playing, startedAt: rt.startedAt,
@@ -663,6 +687,66 @@ const server = http.createServer((req, res) => {
     }, 12e6);
   }
 
+  /* ---------- 上传房间头像（只有房主能改；存为文件，圆形裁剪由客户端做） ---------- */
+  if (pathname === '/api/upload-room-avatar' && req.method === 'POST') {
+    return readBody(req, body => {
+      try {
+        const { userId, roomId, dataUrl } = JSON.parse(body);
+        const room = store.rooms[roomId];
+        if (!room) return send(res, 404, JSON.stringify({ ok: false, msg: '房间不存在' }));
+        if (room.ownerId !== userId) return send(res, 403, JSON.stringify({ ok: false, msg: '只有房主能改房间头像' }));
+
+        const old = room.avatar || '';
+
+        // 传空 = 清除头像，客户端退回「房间名首字」兜底图标
+        if (!dataUrl) {
+          room.avatar = '';
+          saveStore();
+          if (old.startsWith('/room-avatar/')) {
+            fs.unlink(path.join(DATA_DIR, 'room-avatar', path.basename(old)), () => {});
+          }
+          pushSnapshot(room.id);
+          notifyLobby();
+          return send(res, 200, JSON.stringify({ ok: true, url: '' }));
+        }
+
+        const match = /^data:image\/(png|jpe?g|gif|webp);base64,(.+)$/.exec(dataUrl);
+        if (!match) return send(res, 400, JSON.stringify({ ok: false, msg: '仅支持图片' }));
+        const buf = Buffer.from(match[2], 'base64');
+        if (buf.length > 4 * 1024 * 1024) return send(res, 413, JSON.stringify({ ok: false, msg: '房间头像不能超过 4MB' }));
+
+        fs.mkdirSync(path.join(DATA_DIR, 'room-avatar'), { recursive: true });
+        const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
+        const name = 'ra_' + crypto.randomBytes(6).toString('hex') + '.' + ext;
+        fs.writeFileSync(path.join(DATA_DIR, 'room-avatar', name), buf);
+        room.avatar = '/room-avatar/' + name;
+        saveStore();
+
+        // 换了新的就把旧文件删掉，否则换十次头像 data 目录里就躺十张废图
+        if (old.startsWith('/room-avatar/')) {
+          fs.unlink(path.join(DATA_DIR, 'room-avatar', path.basename(old)), () => {});
+        }
+
+        pushSnapshot(room.id);   // 房内即时生效（顶栏 + 悬浮球）
+        notifyLobby();           // 大厅卡片同步
+        send(res, 200, JSON.stringify({ ok: true, url: room.avatar }));
+      } catch (e) { send(res, 500, JSON.stringify({ ok: false, msg: '上传失败：' + e.message })); }
+    }, 8e6);
+  }
+
+  /* ---------- 房间头像静态服务 ---------- */
+  if (pathname.startsWith('/room-avatar/')) {
+    const dir = path.join(DATA_DIR, 'room-avatar');
+    const f = path.join(dir, path.basename(pathname));
+    if (!f.startsWith(dir)) return send(res, 403, 'Forbidden');
+    return fs.readFile(f, (err, data) => {
+      if (err) return send(res, 404, 'Not Found');
+      const ext = path.extname(f).toLowerCase();
+      // 头像 URL 每次上传都是新文件名 → 可以放心长缓存，客户端按 URL 自然失效
+      send(res, 200, data, { 'Content-Type': MIME[ext] || 'image/png', 'Cache-Control': 'public, max-age=2592000, immutable' });
+    });
+  }
+
   /* ---------- 全局房间背景模板（管理员上传，对所有房间通用，GIF 会动） ---------- */
   if (pathname === '/api/admin/upload-default-bg' && req.method === 'POST') {
     const pwd = url.searchParams.get('password');
@@ -824,7 +908,7 @@ function handleAdmin(action, p, res) {
       const r = store.rooms[p.roomId]; if (!r) return bad('房间不存在');
       if (typeof p.name === 'string' && p.name.trim()) r.name = safeStr(p.name, 22);
       if (typeof p.background === 'string') r.background = safeStr(p.background, 40);
-      saveStore(); pushSnapshot(r.id); return ok();
+      saveStore(); pushSnapshot(r.id); notifyLobby(); return ok();
     }
     case 'set-vips': {
       if (Array.isArray(p.vips)) { store.config.vips = p.vips.map(v => safeStr(v, 20)).filter(Boolean); saveStore(); }
@@ -896,6 +980,33 @@ function broadcast(roomId, msg, exceptClientId) {
   for (const m of rt.members.values()) {
     if (m.clientId === exceptClientId) continue;
     if (m.ws && m.ws.readyState === 1) m.ws.send(raw);
+  }
+}
+
+/**
+ * 通知所有在线连接「房间列表有变化」（建房 / 解散 / 改房名 / 改房间头像）。
+ * 只是让客户端去重拉一次 room:list，不下发数据本身 —— 大厅卡片数量少，
+ * 重拉一次比维护增量补丁简单得多，也不会漏字段。
+ */
+function notifyLobby() {
+  const raw = JSON.stringify({ type: 'rooms:changed' });
+  for (const c of wss.clients) {
+    if (c.readyState === 1) { try { c.send(raw); } catch {} }
+  }
+}
+
+/**
+ * 用户资料变化（头像框 / 金币 / 头像）→ 只通知他所在的房间。
+ * 复用 charm:update 的批量格式：客户端本来就有"就地更新这几个成员"的逻辑，
+ * 不用为头像框再造一条协议，老客户端也不会崩。
+ */
+function broadcastUserUpdate(u) {
+  if (!u) return;
+  for (const rid of runtime.keys()) {
+    const rt = runtime.get(rid);
+    let hit = false;
+    for (const m of rt.members.values()) if (m.userId === u.id) { hit = true; break; }
+    if (hit) broadcast(rid, { type: 'charm:update', data: { users: [publicUser(u)] } });
   }
 }
 function sendTo(clientId, roomId, msg) {
@@ -1104,7 +1215,7 @@ wss.on('connection', (ws) => {
         if (exist) {
           return reply({ type: 'room:created', data: {
             id: exist.id, no: exist.no, name: exist.name,
-            background: exist.background, existed: true
+            background: exist.background, avatar: exist.avatar || '', existed: true
           }});
         }
         const id = uid('r');
@@ -1113,9 +1224,10 @@ wss.on('connection', (ws) => {
           background: typeof msg.background === 'string' ? safeStr(msg.background, 60) : DEFAULT_BG,
           ownerId, createdAt: Date.now() };
         store.rooms[id] = room; saveStore();
+        notifyLobby();   // 新建的房间要立刻出现在别人的大厅里
         return reply({ type: 'room:created', data: {
           id: room.id, no: room.no, name: room.name,
-          background: room.background, existed: false
+          background: room.background, avatar: room.avatar || '', existed: false
         }});
       }
 
@@ -1127,7 +1239,9 @@ wss.on('connection', (ws) => {
         const rt = getRuntime(mine.id);
         return reply({ type: 'room:my', data: {
           id: mine.id, no: mine.no, name: mine.name, background: mine.background,
-          ownerId: mine.ownerId, count: rt.members.size, createdAt: mine.createdAt
+          avatar: mine.avatar || '',
+          ownerId: mine.ownerId, count: rt.members.size, createdAt: mine.createdAt,
+          ownerVip: !!(store.users[mine.ownerId] && store.users[mine.ownerId].vip)
         }});
       }
 
@@ -1141,13 +1255,16 @@ wss.on('connection', (ws) => {
         delete store.rooms[room.id];
         runtime.delete(room.id);
         saveStore();
+        notifyLobby();   // 解散了要从别人的大厅列表里消失
         return reply({ type: 'room:destroyed', data: { roomId: room.id } });
       }
 
       case 'room:list': {
         const list = Object.values(store.rooms).map(r => {
           const rt = getRuntime(r.id);
-          return { id: r.id, no: r.no, name: r.name, background: r.background, count: rt.members.size, ownerId: r.ownerId };
+          return { id: r.id, no: r.no, name: r.name, background: r.background,
+                   avatar: r.avatar || '', count: rt.members.size, ownerId: r.ownerId,
+                   ownerVip: !!(store.users[r.ownerId] && store.users[r.ownerId].vip) };
         }).sort((a, b) => b.count - a.count).slice(0, 60);
         return reply({ type: 'room:list', data: list });
       }
@@ -1230,7 +1347,7 @@ wss.on('connection', (ws) => {
         if (!room) return reply({ type: 'error', msg: '房间不存在' });
         if (room.ownerId !== msg.userId) return reply({ type: 'error', msg: '只有房主可以修改' });
         room.name = safeStr(msg.name, 22) || room.name;
-        saveStore(); pushSnapshot(room.id);
+        saveStore(); pushSnapshot(room.id); notifyLobby();
         break;
       }
 
@@ -1238,7 +1355,7 @@ wss.on('connection', (ws) => {
         const room = store.rooms[safeStr(msg.roomId, 40)];
         if (!room) return reply({ type: 'error', msg: '房间不存在' });
         room.background = safeStr(msg.background, 60) || room.background;
-        saveStore(); pushSnapshot(room.id);
+        saveStore(); pushSnapshot(room.id); notifyLobby();
         break;
       }
 
@@ -1253,8 +1370,67 @@ wss.on('connection', (ws) => {
         if (no.length < 4 || no.length > 10) return reply({ type: 'error', msg: '房间号需为 4-10 位数字或字母' });
         if (Object.values(store.rooms).some(r => r.id !== room.id && r.no === no))
           return reply({ type: 'error', msg: '该房间号已被别人占用' });
-        room.no = no; saveStore(); pushSnapshot(room.id);
+        room.no = no; saveStore(); pushSnapshot(room.id); notifyLobby();
         return reply({ type: 'room:no-ok', data: { no } });
+      }
+
+      /* ================= 头像框：商城 / 背包 ================= */
+
+      /* 商城列表 + 我的背包 + 当前穿戴 + 金币余额（一次拿全，商城页只发一条请求） */
+      case 'shop:list': {
+        const u = store.users[safeStr(msg.userId, 40)];
+        if (!u) return reply({ type: 'error', msg: '请先登录' });
+        return reply({ type: 'shop:list', data: {
+          frames: store.config.avatarFrames || [],
+          owned: Array.isArray(u.frames) ? u.frames : [],
+          wearing: typeof u.frame === 'string' ? u.frame : '',
+          coins: Number.isInteger(u.coins) ? u.coins : 0
+        }});
+      }
+
+      /* 买头像框：扣金币 → 进背包 → 顺手戴上（买框就是为了戴，省一步操作） */
+      case 'shop:buy': {
+        const u = store.users[safeStr(msg.userId, 40)];
+        if (!u) return reply({ type: 'error', msg: '请先登录' });
+        const f = (store.config.avatarFrames || []).find(x => x.id === safeStr(msg.frameId, 30));
+        if (!f) return reply({ type: 'error', msg: '头像框不存在' });
+        if (!f.price) return reply({ type: 'error', msg: '这个是默认头像框，人人都有，不用买' });
+
+        u.frames = Array.isArray(u.frames) ? u.frames : [];
+        if (u.frames.includes(f.id)) return reply({ type: 'error', msg: '你已经拥有这个头像框了' });
+
+        const coins = Number.isInteger(u.coins) ? u.coins : 0;
+        if (coins < f.price) return reply({ type: 'error', msg: `金币不够，还差 ${f.price - coins}` });
+
+        u.coins = coins - f.price;
+        u.frames.push(f.id);
+        u.frame = f.id;
+        saveStore();
+        broadcastUserUpdate(u);
+        return reply({ type: 'shop:owned', data: {
+          owned: u.frames, wearing: u.frame, coins: u.coins, bought: f.id, frame: publicUser(u)
+        }});
+      }
+
+      /* 穿戴 / 脱下头像框（frameId 传空串 = 脱下） */
+      case 'frame:wear': {
+        const u = store.users[safeStr(msg.userId, 40)];
+        if (!u) return reply({ type: 'error', msg: '请先登录' });
+        const id = safeStr(msg.frameId, 30);
+        if (id) {
+          const f = (store.config.avatarFrames || []).find(x => x.id === id);
+          if (!f) return reply({ type: 'error', msg: '头像框不存在' });
+          // 默认框不需要购买；付费框必须在背包里
+          if (f.price > 0 && !(Array.isArray(u.frames) && u.frames.includes(id)))
+            return reply({ type: 'error', msg: '你还没有这个头像框' });
+        }
+        u.frame = id;
+        saveStore();
+        broadcastUserUpdate(u);
+        return reply({ type: 'shop:owned', data: {
+          owned: Array.isArray(u.frames) ? u.frames : [], wearing: u.frame,
+          coins: Number.isInteger(u.coins) ? u.coins : 0, frame: publicUser(u)
+        }});
       }
 
       /* 我的背景图（上传过的记录，下次一键复用） */

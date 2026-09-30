@@ -57,6 +57,35 @@ struct VRAvatar: View {
 /// 而且每个地方各写一套、颜色还会走样。统一在组件里按优先级**只画一圈**，各处传参即可。
 ///
 /// 新增参数都带默认值，老调用点不传就是原样，不会因为这次改动而变形。
+/// 头像框样式表（服务端 `config.avatarFrames` 下发）。
+///
+/// 为什么做成全局单例：头像渲染发生在 `VRAvatarFull` 里，而它只拿得到一个 `frame` **id** ——
+/// 背包/配色不进每个成员的快照（房间里 9 个人都驮一份数组太浪费带宽）。
+/// 所以样式单独存一份，商城拉到清单后写进来，所有头像跟着重绘一次。
+///
+/// 加新头像框只需要在服务端数组里加一条，客户端不用改代码、不用发版。
+final class VRFrameCatalog: ObservableObject {
+
+    static let shared = VRFrameCatalog()
+
+    @Published private(set) var frames: [VRAvatarFrame] = []
+
+    func setFrames(_ list: [VRAvatarFrame]) {
+        // 内容没变就别发通知：否则每次打开商城都会把所有头像重绘一遍
+        guard list != frames else { return }
+        frames = list
+    }
+
+    /// 按 id 取头像框；id 为空（没戴）时返回 nil
+    func frame(_ id: String?) -> VRAvatarFrame? {
+        guard let id, !id.isEmpty else { return nil }
+        return frames.first { $0.id == id }
+    }
+
+    /// 默认框（price = 0）
+    var defaultFrame: VRAvatarFrame? { frames.first { $0.price == 0 } }
+}
+
 struct VRAvatarFull: View {
     let user: VRUser?
     var size: CGFloat = 40
@@ -78,6 +107,9 @@ struct VRAvatarFull: View {
     /// 当前这次加载对应的头像 URL；回调到达时校验，丢弃过期结果
     @State private var loadingKey: String?
 
+    /// 头像框样式表（见 VRFrameCatalog 的说明）
+    @ObservedObject private var catalog = VRFrameCatalog.shared
+
     var body: some View {
         Group {
             if let image {
@@ -94,9 +126,12 @@ struct VRAvatarFull: View {
         }
         .frame(width: size, height: size)
         .clipShape(Circle())
+        // 头像框外发光（只有标了 glow 的框才有；其余返回 .clear 等于没画）
+        .shadow(color: frameGlowColor, radius: frameGlowRadius)
         .overlay { ringView }
         .overlay(alignment: .bottomTrailing) { vipLevelBadge }
         .overlay(alignment: .top) { crownBadge }
+        .overlay(alignment: .topLeading) { frameBadge }
         .onAppear(perform: loadIfNeeded)
         .onChange(of: user?.avatar) { _ in
             image = nil
@@ -115,10 +150,41 @@ struct VRAvatarFull: View {
 
     // MARK: - 头像框
 
-    /// 环的配色。优先级：正在说话 > 房主 > VIP > 我自己 > 默认白边。
+    /// 这个人当前戴的头像框（没戴 / 还没拉到样式表 → nil）
+    private var frame: VRAvatarFrame? { catalog.frame(user?.frame) }
+
+    private var frameGlowColor: Color {
+        guard let f = frame, f.glow == true, let c = f.colors.first else { return .clear }
+        return Color(hex: c).opacity(0.55)
+    }
+
+    private var frameGlowRadius: CGFloat {
+        guard let f = frame, f.glow == true else { return 0 }
+        return max(5, size * 0.16)
+    }
+
+    /// 头像框角标（左上角）：右下角被 VIP 等级徽章占了、顶部被皇冠占了，三处正好不打架
+    @ViewBuilder
+    private var frameBadge: some View {
+        if let b = frame?.badge, !b.isEmpty, size >= 30 {
+            Text(b)
+                .font(.system(size: max(10, size * 0.26)))
+                .offset(x: size * 0.15, y: -size * 0.09)
+                .shadow(color: .black.opacity(0.22), radius: 2, y: 1)
+        }
+    }
+
+    /// 环的配色。优先级：正在说话 > 已穿戴的头像框 > 房主 > VIP > 我自己 > 默认白边。
     /// 只取一个，不叠加 —— 叠起来一圈套一圈，小头像上会糊成一坨。
     private var ringColors: [Color]? {
         if speaking { return [VRTheme.green, Color(hex: "22A97C")] }
+        // 花钱买的头像框排第二：买了看不见等于没买。
+        // 房主 / VIP 身份不会因此丢失 —— 皇冠和右下角等级徽章照样在。
+        if let f = frame {
+            let cs = f.colors.compactMap { Color(hex: $0) }
+            if cs.count >= 2 { return cs }
+            if let only = cs.first { return [only, only] }
+        }
         if isHost { return [Color(hex: "FFE08A"), Color(hex: "FF9F1C")] }
         if vipLevel > 0 { return Self.vipRingColors(vipLevel) }
         if isMine { return [VRTheme.brand, Color(hex: "6FC4FF")] }

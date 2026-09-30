@@ -91,7 +91,7 @@ struct MemberSheet: View {
     }
 
     private func memberRow(_ m: VRMember) -> some View {
-        let isHost = m.clientId == state.hostClientId
+        let isHost = state.isOwner(m)
         let isSpeaking = activity.speakingIds.contains(m.clientId)
 
         return HStack(spacing: 11) {
@@ -225,7 +225,7 @@ struct UserCardSheet: View {
 
     private var user: VRUser { member.user }
     private var isMe: Bool { member.clientId == app.clientId }
-    private var isHost: Bool { member.clientId == state.hostClientId }
+    private var isHost: Bool { state.isOwner(member) }
     /// 送给谁：别人的名片 → 预选这个人；自己的名片 → 不预选（默认"全房间"，
     /// 因为"给自己送礼"没有意义，用户点进来通常是想送房里其他人）
     private var giftPreset: String? { isMe ? nil : member.clientId }

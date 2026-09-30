@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A100000100000000000001A /* ShopSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000200000000000001A /* ShopSheet.swift */; };
 		A1000001000000000000001 /* VoiceRoomApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000002000000000000001 /* VoiceRoomApp.swift */; };
 		A1000001000000000000002 /* VRTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000002000000000000002 /* VRTheme.swift */; };
 		A1000001000000000000003 /* VRComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000002000000000000003 /* VRComponents.swift */; };
@@ -34,6 +35,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		A100000200000000000001A /* ShopSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShopSheet.swift; sourceTree = "<group>"; };
 		A1000002000000000000001 /* VoiceRoomApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceRoomApp.swift; sourceTree = "<group>"; };
 		A1000002000000000000002 /* VRTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VRTheme.swift; sourceTree = "<group>"; };
 		A1000002000000000000003 /* VRComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VRComponents.swift; sourceTree = "<group>"; };
@@ -167,7 +169,8 @@
 			children = (
 				A100000200000000000000E /* LobbyView.swift */,
 				A100000200000000000000F /* CreateRoomSheet.swift */,
-			);
+							A100000200000000000001A /* ShopSheet.swift */,
+);
 			path = Lobby;
 			sourceTree = "<group>";
 		};
@@ -306,7 +309,8 @@
 				A1000001000000000000013 /* MemberSheet.swift in Sources */,
 				A1000001000000000000014 /* MusicSheet.swift in Sources */,
 				A1000001000000000000015 /* RoomSettingsSheet.swift in Sources */,
-			);
+							A100000100000000000001A /* ShopSheet.swift in Sources */,
+);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */

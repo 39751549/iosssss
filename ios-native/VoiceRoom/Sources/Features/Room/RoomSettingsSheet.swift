@@ -23,6 +23,8 @@ struct RoomSettingsSheet: View {
     @State private var customNo = ""
     @State private var showBgPicker = false
     @State private var isUploadingBg = false
+    @State private var showAvatarPicker = false
+    @State private var isUploadingAvatar = false
 
     private var isHost: Bool { app.isHost }
     private var isVip: Bool { app.me?.vip == true }
@@ -116,6 +118,80 @@ struct RoomSettingsSheet: View {
                         VRTextField(placeholder: "房间名称", text: $roomName, maxLength: 22)
                             .disabled(!isHost)
                             .opacity(isHost ? 1 : 0.55)
+                    }
+
+                    // 房间头像：房间的"门面"，会出现在房间顶部、最小化悬浮球和大厅列表上
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 6) {
+                            Text("房间头像")
+                                .font(.system(size: 12.5, weight: .semibold))
+                                .foregroundColor(VRTheme.textDim)
+                            Spacer()
+                            Button {
+                                showAvatarPicker = true
+                            } label: {
+                                Text("📷 上传头像")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundColor(VRTheme.text)
+                                    .padding(.horizontal, 11)
+                                    .frame(height: 30)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .fill(Color(hex: "27436B").opacity(0.1))
+                                    )
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .strokeBorder(VRTheme.border, lineWidth: 1)
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(!isHost || isUploadingAvatar)
+                            .opacity(isHost ? 1 : 0.45)
+                        }
+
+                        HStack(spacing: 12) {
+                            ZStack {
+                                if let url = roomAvatarPreviewURL {
+                                    CachedAsyncImage(url: url, profile: .thumb) { phase in
+                                        if case let .success(img) = phase {
+                                            Image(uiImage: img).resizable().scaledToFill()
+                                        } else {
+                                            roomAvatarPlaceholder
+                                        }
+                                    }
+                                } else {
+                                    roomAvatarPlaceholder
+                                }
+                            }
+                            .frame(width: 62, height: 62)
+                            .clipShape(Circle())
+                            .overlay(Circle().strokeBorder(VRTheme.border, lineWidth: 1))
+
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(hasRoomAvatar ? "已设置房间头像" : "还没设置房间头像")
+                                    .font(.system(size: 12.5, weight: .semibold))
+                                    .foregroundColor(hasRoomAvatar ? VRTheme.green : VRTheme.textDim)
+                                Text("显示在房间顶部 · 悬浮球 · 大厅列表")
+                                    .font(.system(size: 10.5))
+                                    .foregroundColor(VRTheme.textMute)
+                                if isUploadingAvatar {
+                                    HStack(spacing: 6) {
+                                        ProgressView().scaleEffect(0.7)
+                                        Text("正在上传…")
+                                            .font(.system(size: 11))
+                                            .foregroundColor(VRTheme.textDim)
+                                    }
+                                }
+                            }
+
+                            Spacer()
+
+                            if hasRoomAvatar && isHost {
+                                Button("清除") { clearRoomAvatar() }
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundColor(VRTheme.red.opacity(0.9))
+                            }
+                        }
                     }
 
                     // 背景
@@ -302,6 +378,11 @@ struct RoomSettingsSheet: View {
                 uploadBackground(img: img, raw: raw)
             }
         }
+        .sheet(isPresented: $showAvatarPicker) {
+            VRPhotoPicker { img, _ in
+                uploadRoomAvatar(img: img)
+            }
+        }
         .onAppear {
             roomName = state.room.name
             background = RoomBackground.resolved(state.room.background)
@@ -310,6 +391,70 @@ struct RoomSettingsSheet: View {
             // 面板关掉（保存 / ✕ / 下滑）都补拉一次快照：
             // 保证回到房间时背景、房间名、成员都是最新的，不必退出房间重进
             app.requestRoomSync()
+        }
+    }
+
+    // MARK: - 房间头像
+
+    private var hasRoomAvatar: Bool { !(state.room.avatar ?? "").isEmpty }
+
+    private var roomAvatarPreviewURL: URL? {
+        guard let a = state.room.avatar, !a.isEmpty else { return nil }
+        return VRConfig.absoluteURL(for: a)
+    }
+
+    private var roomAvatarPlaceholder: some View {
+        ZStack {
+            VRTheme.brandGradient
+            Text(String(state.room.name.prefix(1)))
+                .font(.system(size: 24, weight: .heavy))
+                .foregroundColor(.white)
+        }
+    }
+
+    /// 上传房间头像。头像是圆形的，压到 512 就够 ——
+    /// 背景图才需要 1440（要铺满整屏并且会当动图放）。
+    private func uploadRoomAvatar(img: UIImage) {
+        guard isHost else {
+            app.showToast("只有房主能修改房间头像", kind: .error)
+            return
+        }
+        guard let jpeg = img.resized(maxSide: 512).jpegData(compressionQuality: 0.9),
+              jpeg.count < 4 * 1024 * 1024 else {
+            app.showToast("图片太大了，换张小一点的吧", kind: .error)
+            return
+        }
+        isUploadingAvatar = true
+        let durl = "data:image/jpeg;base64," + jpeg.base64EncodedString()
+
+        RoomAvatarUploader.upload(dataURL: durl, userId: app.userId, roomId: state.room.id) { result in
+            isUploadingAvatar = false
+            switch result {
+            case .success:
+                app.showToast("房间头像已更新 ✨", kind: .success)
+                // 立刻拉一次快照：不用等下一次别人进出房间才看到新头像
+                app.requestRoomSync()
+                app.requestMyRoom()
+            case .failure(let err):
+                app.showToast("上传失败：\(err.localizedDescription)", kind: .error)
+            }
+        }
+    }
+
+    private func clearRoomAvatar() {
+        guard isHost else { return }
+        isUploadingAvatar = true
+        // 传空 dataUrl = 清除，服务端会顺手删掉旧文件
+        RoomAvatarUploader.upload(dataURL: "", userId: app.userId, roomId: state.room.id) { result in
+            isUploadingAvatar = false
+            switch result {
+            case .success:
+                app.showToast("已清除房间头像", kind: .success)
+                app.requestRoomSync()
+                app.requestMyRoom()
+            case .failure(let err):
+                app.showToast("清除失败：\(err.localizedDescription)", kind: .error)
+            }
         }
     }
 
@@ -376,6 +521,42 @@ struct RoomSettingsSheet: View {
         if b[0] == 0x47, b[1] == 0x49, b[2] == 0x46 { return "gif" }
         if b[0] == 0x89, b[1] == 0x50, b[2] == 0x4E, b[3] == 0x47 { return "png" }
         return "other"
+    }
+}
+
+// MARK: - 房间头像上传
+
+/// 房间头像上传（dataURL → /api/upload-room-avatar）。
+/// dataURL 传空串 = 清除头像。
+enum RoomAvatarUploader {
+    static func upload(dataURL: String, userId: String, roomId: String,
+                       completion: @escaping (Result<String, Error>) -> Void) {
+        guard let base = VRConfig.baseURL else {
+            completion(.failure(VRAPIError.noServer)); return
+        }
+        var req = URLRequest(url: base.appendingPathComponent("api/upload-room-avatar"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.timeoutInterval = 60
+        let body: [String: Any] = ["userId": userId, "roomId": roomId, "dataUrl": dataURL]
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        URLSession.shared.dataTask(with: req) { data, _, err in
+            DispatchQueue.main.async {
+                if let err { completion(.failure(err)); return }
+                guard let data,
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    completion(.failure(VRAPIError.empty)); return
+                }
+                if let ok = json["ok"] as? Bool, ok {
+                    completion(.success((json["url"] as? String) ?? ""))
+                } else {
+                    let msg = json["msg"] as? String ?? "上传失败"
+                    completion(.failure(NSError(domain: "room-avatar", code: -1,
+                                                userInfo: [NSLocalizedDescriptionKey: msg])))
+                }
+            }
+        }.resume()
     }
 }
 

@@ -24,6 +24,14 @@ final class AppState: ObservableObject {
     /// 我的永久房间（每人一个，无需重复创建）
     @Published var myRoom: VRMyRoom?
 
+    // MARK: 头像框（商城 / 背包）
+    /// 商城在售的头像框（服务端 config.avatarFrames 下发）
+    @Published var shopFrames: [VRAvatarFrame] = []
+    /// 我已拥有的头像框 id（背包）
+    @Published var ownedFrames: [String] = []
+    /// 是否正在买 / 切换头像框（按钮转圈用）
+    @Published var frameBusy = false
+
     // MARK: 当前房间
     @Published var roomState: VRRoomState?
     @Published var clientId: String = ""
@@ -267,6 +275,36 @@ final class AppState: ObservableObject {
             roomList = list
             isLoadingRooms = false
 
+        case .roomsChanged:
+            // 别人的大厅列表变了（建房 / 解散 / 改名 / 换头像）。
+            // 在房间里时不用管 —— 房间自己的数据走 room:state，大厅列表等回去再拉。
+            if !inRoom { requestRoomList() }
+
+        case let .shopList(frames, owned, wearing, coins):
+            shopFrames = frames
+            ownedFrames = owned
+            frameBusy = false
+            VRFrameCatalog.shared.setFrames(frames)
+            // 服务端才是背包/穿戴的权威，顺手把本地资料对齐
+            if me?.frame != wearing { me?.frame = wearing }
+            if let c = me?.coins, c != coins { me?.coins = coins }
+
+        case let .shopOwned(owned, wearing, coins, frame):
+            ownedFrames = owned
+            frameBusy = false
+            if let f = frame {
+                // 服务端回传的最新资料：金币已扣、头像框已穿
+                me = f
+                // 房间里自己那条成员记录也要跟着变，不然头像框要等下次快照才生效
+                if var st = roomState, let idx = st.members.firstIndex(where: { $0.user.id == f.id }) {
+                    st.members[idx].user = f
+                    roomState = st
+                }
+            } else {
+                me?.frame = wearing
+                me?.coins = coins
+            }
+
         case let .roomMy(room):
             myRoom = room
 
@@ -387,6 +425,8 @@ final class AppState: ObservableObject {
 
         case let .error(msg):
             showToast(msg, kind: .error)
+            // 买框 / 换框失败时要把按钮解锁，否则会一直转圈
+            frameBusy = false
 
         case .unknown:
             break
@@ -403,6 +443,33 @@ final class AppState: ObservableObject {
     func requestMyRoom() {
         guard !userId.isEmpty else { return }
         connection.send(.roomMy(userId: userId))
+    }
+
+    // MARK: - 头像框（商城 / 背包）
+
+    /// 拉商城清单 + 我的背包 + 当前穿戴 + 金币余额（商城页 / 背包页打开时调）
+    func requestShop() {
+        connection.send(.shopList)
+    }
+
+    /// 用金币买头像框：服务端校验余额并扣钱，买完自动戴上（买框就是为了戴）
+    func buyFrame(_ id: String) {
+        guard !frameBusy else { return }
+        frameBusy = true
+        connection.send(.shopBuy(frameId: id))
+    }
+
+    /// 穿戴 / 脱下头像框（传 nil 或空串 = 脱下）
+    func wearFrame(_ id: String?) {
+        guard !frameBusy else { return }
+        frameBusy = true
+        connection.send(.frameWear(frameId: id ?? ""))
+    }
+
+    /// 这个头像框我有没有（默认框人人都有）
+    func ownsFrame(_ id: String) -> Bool {
+        if shopFrames.first(where: { $0.id == id })?.price == 0 { return true }
+        return ownedFrames.contains(id)
     }
 
     /// 房主解散自己的永久房间（房间内 / 大厅均可调用）

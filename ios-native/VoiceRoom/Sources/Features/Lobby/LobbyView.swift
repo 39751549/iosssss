@@ -46,6 +46,9 @@ struct LobbyView: View {
     @State private var showVip = false
     @State private var showServer = false
     @State private var showDestroyConfirm = false
+    /// 头像框商城 / 背包（同一个页面，入口不同决定默认选中哪一段）
+    @State private var showShop = false
+    @State private var shopMode: ShopSheet.Mode = .shop
 
     var body: some View {
         ZStack {
@@ -70,6 +73,9 @@ struct LobbyView: View {
         }
         .sheet(isPresented: $showServer) {
             ServerSettingsView().environmentObject(serverStore).environmentObject(app)
+        }
+        .sheet(isPresented: $showShop) {
+            ShopSheet(initialMode: shopMode).environmentObject(app)
         }
         .onAppear {
             // 进大厅就顺手刷一次：房间列表和"我的房间"的在线人数都是别人也会改的数据
@@ -261,6 +267,52 @@ struct LobbyView: View {
                             value: app.me?.vip == true ? "VIP\(app.me?.vipLevel ?? 1)" : "普通",
                             color: VRTheme.brand2)
                 }
+
+                // 商城入口：金币的唯一下去处，放在资料卡里最顺手（看到金币就想到能花）
+                Button {
+                    shopMode = .shop
+                    showShop = true
+                } label: {
+                    HStack(spacing: 10) {
+                        Text("🛍")
+                            .font(.system(size: 19))
+
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("头像框商城")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundColor(VRTheme.text)
+                            Text("用金币买头像框，买了立刻戴上")
+                                .font(.system(size: 10.5))
+                                .foregroundColor(VRTheme.textDim)
+                        }
+
+                        Spacer()
+
+                        if let f = VRFrameCatalog.shared.frame(app.me?.frame) {
+                            Text(f.name)
+                                .font(.system(size: 10.5, weight: .semibold))
+                                .foregroundColor(VRTheme.brand)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(Capsule().fill(VRTheme.brand.opacity(0.13)))
+                        }
+
+                        Text("›")
+                            .font(.system(size: 19))
+                            .foregroundColor(VRTheme.textMute)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 13, style: .continuous)
+                            .fill(VRTheme.gold.opacity(0.10))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 13, style: .continuous)
+                            .strokeBorder(VRTheme.gold.opacity(0.35), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
             }
         }
     }
@@ -268,6 +320,12 @@ struct LobbyView: View {
     private var genderLabel: String {
         guard let g = app.me?.gender else { return "保密" }
         return g.label
+    }
+
+    /// 房间号配色：房主是 VIP 的房间用金色（一眼从列表里挑出来）。
+    /// 浅底上用纯金对比度偏低，所以偏深一点的琥珀金。
+    private func roomNoColor(_ ownerVip: Bool?) -> Color {
+        (ownerVip ?? false) ? Color(hex: "D98A0B") : VRTheme.textDim
     }
 
     private func statBox(title: String, value: String, color: Color) -> some View {
@@ -300,7 +358,7 @@ struct LobbyView: View {
             VRCard(padding: 14) {
                 VStack(spacing: 11) {
                     HStack(spacing: 11) {
-                        RoomBackgroundThumb(background: room.background, size: 44)
+                        RoomBackgroundThumb(background: room.background, avatar: room.avatar, size: 44)
 
                         VStack(alignment: .leading, spacing: 3) {
                             Text(room.name.isEmpty ? "我的房间" : room.name)
@@ -308,8 +366,9 @@ struct LobbyView: View {
                                 .foregroundColor(VRTheme.text)
                                 .lineLimit(1)
                             Text("房间号 \(room.no)")
-                                .font(.system(size: 11.5, design: .monospaced))
-                                .foregroundColor(VRTheme.textDim)
+                                .font(.system(size: 11.5, weight: room.ownerVip == true ? .bold : .regular,
+                                              design: .monospaced))
+                                .foregroundColor(roomNoColor(room.ownerVip))
                         }
 
                         Spacer()
@@ -423,7 +482,7 @@ struct LobbyView: View {
 
                         Button { app.joinRoom(id: room.id) } label: {
                             HStack(spacing: 12) {
-                                RoomBackgroundThumb(background: room.background, size: 52)
+                                RoomBackgroundThumb(background: room.background, avatar: room.avatar, size: 52)
 
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(room.name.isEmpty ? "我的房间" : room.name)
@@ -431,8 +490,8 @@ struct LobbyView: View {
                                         .foregroundColor(VRTheme.text)
                                         .lineLimit(1)
                                     Text("房间号 \(room.no) · 永久保留")
-                                        .font(.system(size: 11.5))
-                                        .foregroundColor(VRTheme.textDim)
+                                        .font(.system(size: 11.5, weight: room.ownerVip == true ? .semibold : .regular))
+                                        .foregroundColor(room.ownerVip == true ? roomNoColor(true) : VRTheme.textDim)
                                 }
 
                                 Spacer()
@@ -588,7 +647,7 @@ struct LobbyView: View {
 
     private func roomRow(_ room: VRRoomSummary) -> some View {
         HStack(spacing: 11) {
-            RoomBackgroundThumb(background: room.background, size: 44)
+            RoomBackgroundThumb(background: room.background, avatar: room.avatar, size: 44)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(room.name)
@@ -596,8 +655,9 @@ struct LobbyView: View {
                     .foregroundColor(VRTheme.text)
                     .lineLimit(1)
                 Text("房间号 \(room.no)")
-                    .font(.system(size: 11.5, design: .monospaced))
-                    .foregroundColor(VRTheme.textDim)
+                    .font(.system(size: 11.5, weight: room.ownerVip == true ? .bold : .regular,
+                                  design: .monospaced))
+                    .foregroundColor(roomNoColor(room.ownerVip))
             }
 
             Spacer()
@@ -626,6 +686,11 @@ struct LobbyView: View {
                         .buttonStyle(VRButtonStyle(fullWidth: true))
                     Button("👑 VIP 激活") { showVip = true }
                         .buttonStyle(VRButtonStyle(fullWidth: true))
+                    Button("🎒 头像框背包") {
+                        shopMode = .backpack
+                        showShop = true
+                    }
+                    .buttonStyle(VRButtonStyle(fullWidth: true))
                 }
             }
 

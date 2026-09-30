@@ -257,25 +257,32 @@ struct RoomView: View {
             }
             .buttonStyle(.plain)
 
-            // 房间信息：两行（上房间名 · 下房间号），透明底
+            // 房间信息：房间头像 + 两行（上房间名 · 下房间号 / 人数），透明底
             Button {
                 showSettings = true
             } label: {
-                VStack(spacing: 1) {
-                    Text(state.room.name)
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(.white)
-                        .lineLimit(1)
-                    HStack(spacing: 6) {
-                        Text("ID \(state.room.no)")
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.88))
-                        Text("👥 \(state.members.count)")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundColor(.white.opacity(0.88))
+                HStack(spacing: 8) {
+                    roomAvatarView
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(state.room.name)
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundColor(.white)
+                            .lineLimit(1)
+                        HStack(spacing: 6) {
+                            // 房主是 VIP → 房间号走金色，和其他房间区分开
+                            Text("ID \(state.room.no)")
+                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                .foregroundColor(state.room.ownerVip == true ? VRTheme.gold : .white.opacity(0.88))
+                            Text("👥 \(state.members.count)")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundColor(.white.opacity(0.88))
+                        }
                     }
+
+                    Spacer(minLength: 0)
                 }
-                .padding(.horizontal, 12)
+                .padding(.horizontal, 9)
                 .padding(.vertical, 5)
                 .frame(maxWidth: .infinity)
                 .background(
@@ -299,6 +306,42 @@ struct RoomView: View {
         .padding(.horizontal, 12)
         .padding(.top, 6)
         .padding(.bottom, 10)
+    }
+
+    /// 顶栏房间头像：房主上传过头像就显示头像，否则退回房间名首字。
+    /// 房间名首字兜底是必要的 —— 绝大多数房间没有自定义头像，
+    /// 留个空位比挤掉房间名更难看。
+    private var roomAvatarView: some View {
+        ZStack {
+            if let url = roomAvatarURL {
+                CachedAsyncImage(url: url, profile: .thumb) { phase in
+                    if case let .success(img) = phase {
+                        Image(uiImage: img).resizable().scaledToFill()
+                    } else {
+                        roomAvatarFallback
+                    }
+                }
+            } else {
+                roomAvatarFallback
+            }
+        }
+        .frame(width: 30, height: 30)
+        .clipShape(Circle())
+        .overlay(Circle().strokeBorder(Color.white.opacity(0.55), lineWidth: 1))
+    }
+
+    private var roomAvatarFallback: some View {
+        ZStack {
+            VRTheme.brandGradient
+            Text(String(state.room.name.prefix(1)))
+                .font(.system(size: 13, weight: .heavy))
+                .foregroundColor(.white)
+        }
+    }
+
+    private var roomAvatarURL: URL? {
+        guard let a = state.room.avatar, !a.isEmpty else { return nil }
+        return VRConfig.absoluteURL(for: a)
     }
 
     /// 顶栏半透明圆钮（深色底 + 白边，在任何背景上都可见）
@@ -599,7 +642,7 @@ struct RoomStage: View {
 
     let state: VRRoomState
     let clientId: String
-    /// 房主是 VIP → 主位金色光环脉动
+    /// 房主是 VIP → 房主**所在麦位**金色光环脉动
     let vipRoom: Bool
     /// 正在播放的这首歌是谁点的（userId）
     let requesterId: String
@@ -616,11 +659,14 @@ struct RoomStage: View {
         VStack(spacing: 12) {
             // 房主主位（0 号专位，顶部居中）
             HostSeatCell(
-                member: state.member(atSeat: 0),
-                isMine: state.member(atSeat: 0)?.clientId == clientId,
-                speaking: speaking(seat: 0),
-                requesting: isRequester(seat: 0),
-                vipPulse: vipRoom,
+                member: host,
+                isHost: state.isOwner(host),
+                isMine: host?.clientId == clientId,
+                speaking: speaking(host),
+                requesting: isRequester(host),
+                // 只有主位**有人**时才脉动。原来这里只判断"房主是 VIP"，
+                // 房主下麦/换到宾客位后，0 号空位上会残留一个金色光圈在转。
+                vipPulse: vipRoom && host != nil,
                 onTap: { onTap(0) },
                 onLongPress: { onLongPress(0) }
             )
@@ -629,15 +675,7 @@ struct RoomStage: View {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 4),
                       spacing: 12) {
                 ForEach(1..<seatCount, id: \.self) { seat in
-                    SeatCell(
-                        seat: seat,
-                        member: state.member(atSeat: seat),
-                        isMine: state.member(atSeat: seat)?.clientId == clientId,
-                        speaking: speaking(seat: seat),
-                        requesting: isRequester(seat: seat),
-                        onTap: { onTap(seat) },
-                        onLongPress: { onLongPress(seat) }
-                    )
+                    guestSeat(seat)
                 }
             }
         }
@@ -645,15 +683,38 @@ struct RoomStage: View {
         .padding(.bottom, 14)
     }
 
-    private func speaking(seat: Int) -> Bool {
-        guard let m = state.member(atSeat: seat) else { return false }
+    /// 0 号主位。
+    private var host: VRMember? { state.member(atSeat: 0) }
+
+    /// 房主坐到 1-8 号麦位时，房主标识（金环 + 皇冠 + 金色脉动）得跟着他走，
+    /// 不然房主一离开主位就"变成普通人"了。
+    @ViewBuilder
+    private func guestSeat(_ seat: Int) -> some View {
+        let m = state.member(atSeat: seat)
+        let isOwnerHere = state.isOwner(m)
+        SeatCell(
+            seat: seat,
+            member: m,
+            isHost: isOwnerHere,
+            isMine: m?.clientId == clientId,
+            speaking: speaking(m),
+            requesting: isRequester(m),
+            vipPulse: vipRoom && isOwnerHere,
+            onTap: { onTap(seat) },
+            onLongPress: { onLongPress(seat) }
+        )
+    }
+
+    /// 成员直接传进来，省一次 `members.first { … }` 线性查找
+    private func speaking(_ m: VRMember?) -> Bool {
+        guard let m else { return false }
         return activity.speakingIds.contains(m.clientId)
     }
 
     /// 是不是「正在播放的这首歌的点歌人」。
     /// 用 userId 匹配而不是 clientId：同一个账号在快照里可能残留多条成员记录，clientId 会抖，userId 不会。
-    private func isRequester(seat: Int) -> Bool {
-        guard !requesterId.isEmpty, let m = state.member(atSeat: seat) else { return false }
+    private func isRequester(_ m: VRMember?) -> Bool {
+        guard !requesterId.isEmpty, let m else { return false }
         return m.user.id == requesterId
     }
 }
@@ -663,10 +724,14 @@ struct RoomStage: View {
 struct SeatCell: View {
     let seat: Int
     let member: VRMember?
+    /// 房主本人就坐在这个麦位（他离开主位换到 1-8 号时，金环 + 皇冠得跟着人走）
+    var isHost: Bool = false
     let isMine: Bool
     let speaking: Bool
     /// 我就是当前这首歌的点歌人 → 金色音符光环
     var requesting: Bool = false
+    /// 房主是 VIP 且就坐在这个麦位 → 常驻金色脉动光环
+    var vipPulse: Bool = false
     let onTap: () -> Void
     let onLongPress: () -> Void
 
@@ -674,18 +739,20 @@ struct SeatCell: View {
         Button(action: onTap) {
             VStack(spacing: 6) {
                 ZStack {
-                    // 点歌光环：正在播放的这首歌是他点的（金色，和"正在说话"的绿色区分开）
+                    // 三种光环互斥（和主位一致），避免同一张头像上叠两层光晕
+                    // 优先级：点歌金环 > 说话绿环 > VIP 房金色脉动
                     if requesting {
                         RequestHalo(size: 62)
-                    }
-                    // 说话光环：柔和呼吸光圈（说话时出现，不说时消失）
-                    if speaking {
+                    } else if speaking {
                         SpeakingHalo(size: 62, color: VRTheme.green)
+                    } else if vipPulse {
+                        RequestHalo(size: 62)
                     }
 
                     if let member {
-                        // 头像框统一由 VRAvatarFull 画：说话绿环 > VIP 分色环 > 自己蓝环 > 默认白边
+                        // 头像框统一由 VRAvatarFull 画：说话绿环 > 房主金环 > VIP 分色环 > 自己蓝环 > 默认白边
                         VRAvatarFull(user: member.user, size: 52,
+                                     isHost: isHost,
                                      isMine: isMine,
                                      speaking: speaking,
                                      vipLevel: member.user.vip ? member.user.vipLevel : 0,
@@ -815,11 +882,13 @@ struct SpeakingHalo: View {
 
 struct HostSeatCell: View {
     let member: VRMember?
+    /// 坐在 0 号位的确实是房主本人（按 ownerId 比出来，防历史残留记录占了主位）
+    var isHost: Bool = true
     let isMine: Bool
     let speaking: Bool
     /// 我就是当前这首歌的点歌人 → 金色音符光环
     var requesting: Bool = false
-    /// 房主是 VIP → 主位常驻金色脉动光环（"VIP 房间闪闪发光"的落点之一）
+    /// 房主是 VIP 且坐在主位 → 常驻金色脉动光环（"VIP 房间闪闪发光"的落点之一）
     var vipPulse: Bool = false
     let onTap: () -> Void
     let onLongPress: () -> Void
@@ -844,7 +913,7 @@ struct HostSeatCell: View {
                         if let member {
                             // 房主的金环 + 皇冠统一交给头像框画，这里不再叠第二层
                             VRAvatarFull(user: member.user, size: 62,
-                                         isHost: true,
+                                         isHost: isHost,
                                          isMine: isMine,
                                          speaking: speaking,
                                          vipLevel: member.user.vip ? member.user.vipLevel : 0,
@@ -879,11 +948,15 @@ struct HostSeatCell: View {
 
                 // 名字胶囊（带红色"房"字标）；透明底
                 HStack(spacing: 4) {
-                    Text("房")
-                        .font(.system(size: 9.5, weight: .heavy))
-                        .foregroundColor(.white)
-                        .frame(width: 15, height: 15)
-                        .background(Circle().fill(Color(hex: "E0344C")))
+                    // 空位也要挂着"房"标 —— 那是"这是主位"的标识，不是"这个人是谁"的标识。
+                    // 有人坐时只有确实是房主本人才显示（挡住异常残留记录占了主位的情况）。
+                    if member == nil || isHost {
+                        Text("房")
+                            .font(.system(size: 9.5, weight: .heavy))
+                            .foregroundColor(.white)
+                            .frame(width: 15, height: 15)
+                            .background(Circle().fill(Color(hex: "E0344C")))
+                    }
                     Text(member?.user.name ?? "虚位以待")
                         .font(.system(size: 11.5, weight: .semibold))
                         .foregroundColor(.white.opacity(member == nil ? 0.65 : 0.98))

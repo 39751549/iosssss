@@ -12,6 +12,10 @@ struct VRUser: Codable, Identifiable, Equatable {
     var charm: Int
     var vip: Bool
     var vipLevel: Int
+    /// 当前穿戴的头像框 id（空 = 不戴，只显示 VIP 等级环）
+    var frame: String?
+    /// 已拥有的头像框 id 列表（背包）。默认框不占背包位，人人都有。
+    var frames: [String]?
 
     static func placeholder(id: String = "local") -> VRUser {
         VRUser(id: id, name: "游客", avatar: "", gender: .secret, bio: "",
@@ -61,6 +65,10 @@ struct VRRoom: Codable, Identifiable, Equatable {
     var no: String
     var background: String
     var ownerId: String
+    /// 房间头像（房主上传，圆形展示）。空 = 退回背景缩略图 / 名字首字。
+    var avatar: String?
+    /// 房主是不是 VIP —— 是的话房间号显示成金色
+    var ownerVip: Bool?
 }
 
 /// 大厅列表里的房间（带在线人数）
@@ -71,6 +79,8 @@ struct VRRoomSummary: Codable, Identifiable, Equatable {
     var background: String
     var count: Int
     var ownerId: String
+    var avatar: String?
+    var ownerVip: Bool?
 }
 
 /// 我的永久房间（room:my 返回，可能没有）
@@ -82,6 +92,27 @@ struct VRMyRoom: Codable, Identifiable, Equatable {
     var ownerId: String
     var count: Int
     var createdAt: Double
+    var avatar: String?
+    var ownerVip: Bool?
+}
+
+/// 头像框（商城可买 / 背包可穿戴）。
+///
+/// 样式不在客户端写死：服务端给出配色和角标，客户端统一渲染成「渐变环 + 可选角标 + 可选外发光」，
+/// 以后加新头像框只要在服务端 config.avatarFrames 里加一条就行，不用发版。
+struct VRAvatarFrame: Codable, Identifiable, Equatable {
+    var id: String
+    var name: String
+    /// 金币价格；0 = 默认框（人人都有，不占背包）
+    var price: Int
+    /// 渐变环颜色（hex，2-3 个）
+    var colors: [String]
+    /// 角标 emoji（可空）
+    var badge: String?
+    /// 是否带外发光
+    var glow: Bool?
+    /// 稀有度：normal / rare / epic / legend。仅影响商城的标签配色
+    var tier: String?
 }
 
 // MARK: - 房间成员（麦位）
@@ -241,6 +272,17 @@ struct VRRoomState: Codable, Equatable {
 
     func member(clientId: String) -> VRMember? {
         members.first { $0.clientId == clientId }
+    }
+
+    /// 这个人是不是房主。
+    ///
+    /// 用 `room.ownerId` 判定，而不是 `hostClientId`：后者的语义是"坐在 0 号主位的是谁"，
+    /// 而服务端**允许房主离开主位换到 1-8 号麦**（0 号位空着，宾客也坐不了）。
+    /// 房主一换位，靠 hostClientId 就认不出他了 —— 金环、皇冠、房主徽章会整片消失。
+    /// ownerId 由服务端持久化，跟着人不跟着座位走。
+    func isOwner(_ m: VRMember?) -> Bool {
+        guard let m, !room.ownerId.isEmpty else { return false }
+        return m.user.id == room.ownerId
     }
 }
 

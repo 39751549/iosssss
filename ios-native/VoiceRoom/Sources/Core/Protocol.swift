@@ -109,6 +109,12 @@ enum VRClientMessage {
     case musicControl(action: String, songId: String?, mode: String?)
     /// VIP 自定义房间号（4-10 位数字或字母，全服唯一，永久保存）
     case roomSetNo(roomId: String, userId: String, no: String)
+    /// 头像框：拉商城清单 + 我的背包 + 当前穿戴 + 金币余额
+    case shopList
+    /// 买头像框（服务端校验并扣金币）
+    case shopBuy(frameId: String)
+    /// 穿戴 / 脱下头像框（frameId 传空串表示脱下）
+    case frameWear(frameId: String)
     // WebRTC 信令
     case rtcOffer(to: String, sdp: String)
     case rtcAnswer(to: String, sdp: String)
@@ -197,6 +203,15 @@ enum VRClientMessage {
         case let .roomSetNo(roomId, userId, no):
             return ["type": "room:set-no", "roomId": roomId, "userId": userId, "no": no]
 
+        case .shopList:
+            return ["type": "shop:list"]
+
+        case let .shopBuy(frameId):
+            return ["type": "shop:buy", "frameId": frameId]
+
+        case let .frameWear(frameId):
+            return ["type": "frame:wear", "frameId": frameId]
+
         case let .rtcOffer(to, sdp):
             return ["type": "rtc:offer", "to": to, "data": ["type": "offer", "sdp": sdp]]
 
@@ -239,6 +254,12 @@ enum VRServerMessage {
     case rtcIce(from: String, candidate: [String: Any])
     case rtcBye(from: String)
     case roomNoOK(no: String)
+    /// 大厅房间列表有变化（建房 / 解散 / 改名 / 换头像）→ 客户端重拉一次 room:list
+    case roomsChanged
+    /// 商城清单 + 我的背包 + 当前穿戴 + 金币
+    case shopList(frames: [VRAvatarFrame], owned: [String], wearing: String, coins: Int)
+    /// 购买 / 穿戴后的最新状态（frame = 服务端回传的我的最新资料，用来同步 app.me）
+    case shopOwned(owned: [String], wearing: String, coins: Int, frame: VRUser?)
     case error(String)
     case unknown(String)
 
@@ -337,6 +358,23 @@ enum VRServerMessage {
             }
             guard let u = decode(VRUser.self, d["user"]) else { return .unknown(type) }
             return .charmUpdate([u])
+
+        case "rooms:changed":
+            return .roomsChanged
+
+        case "shop:list":
+            guard let d = data else { return .unknown(type) }
+            return .shopList(frames: decode([VRAvatarFrame].self, d["frames"]) ?? [],
+                             owned: (d["owned"] as? [String]) ?? [],
+                             wearing: (d["wearing"] as? String) ?? "",
+                             coins: (d["coins"] as? NSNumber)?.intValue ?? 0)
+
+        case "shop:owned":
+            guard let d = data else { return .unknown(type) }
+            return .shopOwned(owned: (d["owned"] as? [String]) ?? [],
+                              wearing: (d["wearing"] as? String) ?? "",
+                              coins: (d["coins"] as? NSNumber)?.intValue ?? 0,
+                              frame: decode(VRUser.self, d["frame"]))
 
         case "rtc:offer":
             guard let from = json["from"] as? String,

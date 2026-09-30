@@ -378,6 +378,8 @@ function applyState(s) {
   VR.applyBackground(s.room.background);
 
   document.getElementById('roomNo').textContent = s.room.no;
+  // 房主是 VIP 的房间 → 顶栏房间号走金色
+  document.getElementById('roomNo').classList.toggle('vip', !!s.room.ownerVip);
   document.getElementById('roomName').textContent = s.room.name;
   document.getElementById('roomCount').textContent = s.members.length;
   document.getElementById('giftCoins').textContent = VR.shortNum(ME ? ME.coins : 0);

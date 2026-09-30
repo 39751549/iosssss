@@ -342,10 +342,10 @@ function renderRooms(list) {
   }
   box.innerHTML = list.map(r => `
     <div class="room-item" onclick="joinRoom('${r.id}')">
-      <div class="room-thumb" style="${VR.bgStyle(r.background)}"></div>
+      <div class="room-thumb" style="${VR.roomThumbStyle(r)}"></div>
       <div class="room-meta">
         <div class="rn">${VR.esc(r.name)}</div>
-        <div class="ro">房间号 ${r.no}</div>
+        <div class="ro${VR.roomNoClass(r)}">房间号 ${r.no}</div>
       </div>
       <div class="room-live ${r.count ? '' : 'idle'}">${r.count ? r.count + ' 人' : '空闲'}</div>
     </div>`).join('');
@@ -361,10 +361,10 @@ function renderMyRoom(room) {
   card.style.display = '';
   body.innerHTML = `
     <div class="my-room-hero" onclick="joinRoom('${room.id}')">
-      <div class="mrh-thumb" style="${VR.bgStyle(room.background)}"></div>
+      <div class="mrh-thumb" style="${VR.roomThumbStyle(room)}"></div>
       <div class="mrh-meta">
         <div class="mrh-name">${VR.esc(room.name)}</div>
-        <div class="mrh-no">房间号 ${room.no} · ${room.count ? room.count + ' 人在房间里' : '此刻没人'}</div>
+        <div class="mrh-no${VR.roomNoClass(room)}">房间号 ${room.no} · ${room.count ? room.count + ' 人在房间里' : '此刻没人'}</div>
       </div>
       <div class="mrh-go">进入 ›</div>
     </div>`;

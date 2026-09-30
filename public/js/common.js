@@ -183,6 +183,24 @@ const VR = (() => {
   function resolveBg(id) {
     return isImageBg(id) ? id : DEFAULT_BG;
   }
+
+  /**
+   * 房间缩略图样式：优先房间头像，其次房间背景。
+   * 背景图常是一整张风景，缩成 44px 的方块根本认不出是哪个房；
+   * 房主专门传的头像才有辨识度。
+   */
+  function roomThumbStyle(room) {
+    const av = room && typeof room.avatar === 'string' ? room.avatar : '';
+    if (isImageBg(av)) {
+      return `background-image:url('${esc(av)}');background-size:cover;background-position:center`;
+    }
+    return bgStyle(room ? room.background : '');
+  }
+
+  /** 房主是 VIP 的房间 → 房间号走金色，和其他房间区分开 */
+  function roomNoClass(room) {
+    return (room && room.ownerVip) ? ' vip' : '';
+  }
   /** 页面 body 上可能残留的旧主题类，切背景时统一摘掉 */
   const BG_CLASSES = ['bg-aurora', 'bg-hearts', 'bg-sakura', 'bg-bubbles', 'bg-meteor', 'bg-custom'];
 
@@ -238,5 +256,6 @@ const VR = (() => {
   return { LS, toast, esc, avatarHtml, genAvatar, avatarColor, hhmm, connect,
            openSheet, closeSheet, openModal, closeModal, fileToCompressedDataURL,
            GENDER, genderIcon, BACKGROUNDS, DEFAULT_BG, findBg, isImageBg, isCustomBg,
-           bgStyle, resolveBg, applyBackground, shortNum, haptic, copy, vipBadge };
+           bgStyle, resolveBg, applyBackground, shortNum, haptic, copy, vipBadge,
+           roomThumbStyle, roomNoClass };
 })();
