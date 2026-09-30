@@ -177,6 +177,10 @@ const DEFAULT_CONFIG = {
    * 头像框商城。加新头像框只要往这个数组里加一条 —— 客户端是通用的
    * 「渐变环 + 角标 + 可选外发光」渲染器，不用改代码也不用发版。
    * price = 0 是默认框（人人都有，不占背包位）。
+   *
+   * 图片头像框（img 字段）：直接下发一张 264x264、中心透明的 PNG 叠在头像上，
+   * 美术完全由素材决定；colors 保留一份主色 —— 老版本 App 不认识 img 时退回画渐变环。
+   * 素材放 public/frames/，静态服务直接可访问。
    */
   avatarFrames: [
     { id: 'classic', name: '云白',   price: 0,     colors: ['FFFFFF', 'CFE0F5'],                     tier: 'normal' },
@@ -185,8 +189,11 @@ const DEFAULT_CONFIG = {
     { id: 'clover',  name: '四叶草', price: 2500,  colors: ['A8EFB6', '3ECFA0'],   badge: '🍀', tier: 'rare'   },
     { id: 'flame',   name: '烈焰',   price: 5000,  colors: ['FFB56B', 'FF5A3C'],   badge: '🔥', tier: 'epic',   glow: true },
     { id: 'galaxy',  name: '星河',   price: 12000, colors: ['A98CFF', '4A3FFF'],   badge: '✨', tier: 'epic',   glow: true },
+    { id: 'rainbow', name: '虹之庭', price: 15000, colors: ['7EE8FA', '8A6BFF'],   img: '/frames/frame-rainbow.png',    tier: 'epic'   },
+    { id: 'goldwhale', name: '金月鲸', price: 20000, colors: ['FFE89A', 'FFD34E'], img: '/frames/frame-goldwhale.png',  tier: 'legend', glow: true },
     { id: 'royal',   name: '皇冠金', price: 30000, colors: ['FFE89A', 'FF9F1C'],   badge: '👑', tier: 'legend', glow: true },
-    { id: 'aurora',  name: '极光',   price: 80000, colors: ['FF9AC8', 'FFD86B', '7ED0FF'], badge: '🌈', tier: 'legend', glow: true }
+    { id: 'aurora',  name: '极光',   price: 80000, colors: ['FF9AC8', 'FFD86B', '7ED0FF'], badge: '🌈', tier: 'legend', glow: true },
+    { id: 'koi',     name: '锦鲤',   price: 88888, colors: ['4FC3F7', '7C4DFF'],   img: '/frames/frame-koi.png',        tier: 'legend', glow: true }
   ]
 };
 
@@ -207,6 +214,14 @@ function loadStore() {
       // 老数据没有头像框清单 → 补上默认的，否则商城是空的
       if (!Array.isArray(store.config.avatarFrames) || !store.config.avatarFrames.length) {
         store.config.avatarFrames = DEFAULT_CONFIG.avatarFrames;
+      } else {
+        // 服务端升级带了新商品（如图片头像框）：线上 store.json 里存的还是旧清单，
+        // 直接 Object.assign 会让新商品被旧数据吞掉 —— 按 id 把缺的补到队尾。
+        // 管理端/运营改过顺序或价格的，以已存的为准，不动。
+        const have = new Set(store.config.avatarFrames.map(f => f.id));
+        for (const f of DEFAULT_CONFIG.avatarFrames) {
+          if (!have.has(f.id)) store.config.avatarFrames.push(f);
+        }
       }
     }
   } catch (e) { console.error('[store] 读取失败:', e.message); }

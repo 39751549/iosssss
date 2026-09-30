@@ -100,13 +100,19 @@ struct VRMyRoom: Codable, Identifiable, Equatable {
 ///
 /// 样式不在客户端写死：服务端给出配色和角标，客户端统一渲染成「渐变环 + 可选角标 + 可选外发光」，
 /// 以后加新头像框只要在服务端 config.avatarFrames 里加一条就行，不用发版。
+///
+/// 图片头像框（img 非空）：服务端直接下发一张 264x264、中心透明的 PNG，
+/// 客户端把它原样叠在头像上 —— 框的美术完全由素材决定，渐变环只做老版本的兜底
+/// （新框 + 老 App：老 App 不认识 img，退回画 colors 渐变环，不至于显示成白圈）。
 struct VRAvatarFrame: Codable, Identifiable, Equatable {
     var id: String
     var name: String
     /// 金币价格；0 = 默认框（人人都有，不占背包）
     var price: Int
-    /// 渐变环颜色（hex，2-3 个）
+    /// 渐变环颜色（hex，2-3 个）；图片框时可空（老版本兜底用）
     var colors: [String]
+    /// 图片素材地址（/frames/xxx.png，264x264 中心透明）。nil = 渐变环框
+    var img: String?
     /// 角标 emoji（可空）
     var badge: String?
     /// 是否带外发光

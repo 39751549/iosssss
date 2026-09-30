@@ -100,9 +100,16 @@ struct VRAvatarFull: View {
     @State private var image: UIImage?
     /// 当前这次加载对应的头像 URL；回调到达时校验，丢弃过期结果
     @State private var loadingKey: String?
+    /// 图片头像框的素材图（服务端下发的 264x264 中心透明 PNG）
+    @State private var frameImage: UIImage?
+    /// 头像框素材这次加载的目标 URL，同样用于丢弃过期结果
+    @State private var frameLoadingKey: String?
 
     /// 头像框样式表（见 VRFrameCatalog 的说明）
     @ObservedObject private var catalog = VRFrameCatalog.shared
+
+    /// 当前头像框的素材地址；换框 / 换人时靠它触发重新加载
+    private var frameImageKey: String { frame?.img ?? "" }
 
     var body: some View {
         Group {
@@ -123,10 +130,16 @@ struct VRAvatarFull: View {
         // 头像框外发光（只有标了 glow 的框才有；其余返回 .clear 等于没画）
         .shadow(color: frameGlowColor, radius: frameGlowRadius)
         .overlay { ringView }
+        // 图片头像框：整张素材叠在头像之上。素材中心透明，贴边不遮脸，
+        // 必须画在 ringView 之后（图片框不再画渐变环，见 ringColors 的注释）
+        .overlay { frameArtView }
         // 头像上**什么都不压**：皇冠、等级章、框角标、静音标全部撤掉。
         // 这类 App 最好看的就是头像本身，任何角标都是在给脸打码；
         // 身份 / 状态一律交给头像外的元素表达（名字颜色、「房」标、名字行的静音标）。
-        .onAppear(perform: loadIfNeeded)
+        .onAppear {
+            loadIfNeeded()
+            loadFrameArtIfNeeded()
+        }
         .onChange(of: user?.avatar) { _ in
             image = nil
             loadingKey = nil
@@ -140,6 +153,9 @@ struct VRAvatarFull: View {
             loadingKey = nil
             loadIfNeeded()
         }
+        .onChange(of: user?.frame) { _ in loadFrameArtIfNeeded() }
+        // 商城清单晚于头像到达（先进房间后拉商城）→ 框素材到了要补加载
+        .onChange(of: frameImageKey) { _ in loadFrameArtIfNeeded() }
     }
 
     // MARK: - 头像框
@@ -174,12 +190,48 @@ struct VRAvatarFull: View {
         if speaking { return [VRTheme.green, Color(hex: "22A97C")] }
         // 花钱买的头像框：买了看不见等于没买，这个留住
         if let f = frame {
-            let cs = f.colors.compactMap { Color(hex: $0) }
-            if cs.count >= 2 { return cs }
-            if let only = cs.first { return [only, only] }
+            // 图片素材框不画渐变环 —— 框本身就是一张图，环会被整圈盖住，
+            // 两层叠在一起边缘发糊。图片加载失败时也不补环，宁可素一点
+            if (f.img ?? "").isEmpty {
+                let cs = f.colors.compactMap { Color(hex: $0) }
+                if cs.count >= 2 { return cs }
+                if let only = cs.first { return [only, only] }
+            }
         }
         if showNeutralRing { return [Color.white.opacity(0.62), Color.white.opacity(0.42)] }
         return nil
+    }
+
+    /// 图片头像框：服务端下发的整张素材（264x264、中心透明），
+    /// 按 1:1 叠在头像上，贴边环绕不遮脸。
+    @ViewBuilder
+    private var frameArtView: some View {
+        if let ui = frameImage {
+            Image(uiImage: ui)
+                .resizable()
+                .frame(width: size, height: size)
+                // 说话状态在图片框上的表达：环会被框图盖住，改用一圈绿光
+                .shadow(color: speaking ? VRTheme.green.opacity(0.6) : .clear,
+                        radius: speaking ? max(4, size * 0.12) : 0)
+        }
+    }
+
+    private func loadFrameArtIfNeeded() {
+        guard let path = frame?.img, !path.isEmpty else {
+            frameImage = nil
+            frameLoadingKey = nil
+            return
+        }
+        guard let url = absoluteAvatarURL(path) else { return }
+        frameLoadingKey = url.absoluteString
+        if let hit = MediaCache.shared.cachedImage(for: url, profile: .avatar) {
+            frameImage = hit
+            return
+        }
+        MediaCache.shared.image(for: url, profile: .avatar) { [self] img in
+            guard frameLoadingKey == url.absoluteString else { return }
+            frameImage = img
+        }
     }
 
     @ViewBuilder
