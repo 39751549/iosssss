@@ -14,6 +14,25 @@ enum CrashReporter {
         return dir.appendingPathComponent("vr-crash-last.log")
     }
 
+    /// 面包屑：关键动作执行前落一行。哪怕崩溃是 SIGKILL（watchdog 强杀，任何钩子
+    /// 都抓不到），下次启动也能从面包屑看出「死前最后做到哪一步」。
+    static var crumbURL: URL {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("vr-crumb.log")
+    }
+
+    static func crumb(_ s: String) {
+        let line = "\(Int(Date().timeIntervalSince1970)) \(s)\n"
+        if let fh = try? FileHandle(forWritingTo: crumbURL) {
+            defer { try? fh.close() }
+            fh.seekToEndOfFile()
+            fh.write(line.data(using: .utf8)!)
+        } else {
+            try? ("=== crumbs ===\n" + line).write(to: crumbURL, atomically: true, encoding: .utf8)
+        }
+    }
+
     static func install() {
         // NSException：CoreAudio / AVFoundation 这类框架「闪退」几乎全是抛异常
         // （例如 'com.apple.coreaudio.avfaudio' required condition is false），
@@ -54,5 +73,16 @@ enum CrashReporter {
               !text.isEmpty else { return nil }
         try? FileManager.default.removeItem(at: fileURL)
         return String(text.prefix(8000))
+    }
+
+    /// 面包屑尾部（用于即使没有异常记录、疑似被强杀时，也能看到死前最后动作）
+    static func tailCrumbs(_ limit: Int = 40) -> String? {
+        guard let text = try? String(contentsOf: crumbURL, encoding: .utf8) else { return nil }
+        let lines = text.split(separator: "\n").suffix(limit)
+        return lines.isEmpty ? nil : lines.joined(separator: "\n")
+    }
+
+    static func clearCrumbs() {
+        try? FileManager.default.removeItem(at: crumbURL)
     }
 }

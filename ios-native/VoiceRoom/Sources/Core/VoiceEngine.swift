@@ -57,6 +57,7 @@ final class VoiceEngine: NSObject {
         // 必须在创建工厂（WebRTC 音频单元诞生）之前把会话档位定成双向语音；
         // 之后整个连接生命周期内都不再改 category。
         prepareSessionForRTC()
+        CrashReporter.crumb("voice: creating RTC factory")
         RTCInitializeSSL()
         let encoder = RTCDefaultVideoEncoderFactory()
         let decoder = RTCDefaultVideoDecoderFactory()
@@ -79,9 +80,11 @@ final class VoiceEngine: NSObject {
     private func prepareSessionForRTC() {
         let session = AVAudioSession.sharedInstance()
         guard session.category != .playAndRecord else {
+            CrashReporter.crumb("voice: session already playAndRecord (skip switch)")
             audioMode = .talk
             return
         }
+        CrashReporter.crumb("voice: switching category -> playAndRecord (factory=nil)")
         do {
             try session.setCategory(.playAndRecord,
                                     mode: .voiceChat,
@@ -128,15 +131,18 @@ final class VoiceEngine: NSObject {
         // WebRTC 已在跑 / 会话已是双向档：category 一个字都不能改（改 = 闪退），
         // 只补一次激活和扬声器偏好。
         if factory != nil || session.category == .playAndRecord {
+            CrashReporter.crumb("voice: enterTalkMode safe path (factory=\(factory != nil))")
             do {
                 try session.setActive(true)
             } catch {
+                CrashReporter.crumb("voice: setActive FAIL \(error.localizedDescription)")
                 print("[Voice] 语音会话激活失败: \(error.localizedDescription)")
             }
             audioMode = .talk
             applySpeakerPreference()
             return
         }
+        CrashReporter.crumb("voice: enterTalkMode full switch")
         do {
             try session.setCategory(.playAndRecord,
                                     mode: .voiceChat,
@@ -164,32 +170,31 @@ final class VoiceEngine: NSObject {
 
     /// 请求麦克风权限并开始采集
     func requestMic(completion: @escaping (Bool) -> Void) {
+        CrashReporter.crumb("voice: requestMic enter")
+        let onGranted: (Bool) -> Void = { granted in
+            DispatchQueue.main.async {
+                CrashReporter.crumb("voice: permission granted=\(granted)")
+                if granted {
+                    self.enterTalkMode()
+                    self.startLocalAudio()
+                }
+                completion(granted)
+            }
+        }
         if #available(iOS 17.0, *) {
-            AVAudioApplication.requestRecordPermission { granted in
-                DispatchQueue.main.async {
-                    if granted {
-                        self.enterTalkMode()
-                        self.startLocalAudio()
-                    }
-                    completion(granted)
-                }
-            }
+            AVAudioApplication.requestRecordPermission(onGranted)
         } else {
-            AVAudioSession.sharedInstance().requestRecordPermission { granted in
-                DispatchQueue.main.async {
-                    if granted {
-                        self.enterTalkMode()
-                        self.startLocalAudio()
-                    }
-                    completion(granted)
-                }
-            }
+            AVAudioSession.sharedInstance().requestRecordPermission(onGranted)
         }
     }
 
     private func startLocalAudio() {
+        CrashReporter.crumb("voice: startLocalAudio enter")
         setupFactory()
-        guard localStream == nil, let factory else { return }
+        guard localStream == nil, let factory else {
+            CrashReporter.crumb("voice: startLocalAudio skip (localStream=\(localStream != nil))")
+            return
+        }
 
         // AEC/NS/AGC 由 WebRTC 音频处理默认开启，无需显式约束键
         let constraints = RTCMediaConstraints(
@@ -197,6 +202,7 @@ final class VoiceEngine: NSObject {
             optionalConstraints: nil
         )
         let source = factory.audioSource(with: constraints)
+        CrashReporter.crumb("voice: audioSource created")
         let track = factory.audioTrack(with: source, trackId: "audio0")
         audioTrack = track
 
@@ -204,14 +210,17 @@ final class VoiceEngine: NSObject {
         stream.addAudioTrack(track)
         localStream = stream
         isMicOn = true
+        CrashReporter.crumb("voice: local track ready, peers=\(peers.count)")
 
         // 已存在的连接补上本地音轨，并触发重协商。
         // ⚠️ 必须传真实的 remoteId：以前传 nil 会被 renegotiate 的 guard 吞掉，
         // 导致「先进房、后开麦」时房里其他人永远收不到我的音轨。
         for (remoteId, pc) in peers {
+            CrashReporter.crumb("voice: renegotiate -> \(remoteId)")
             pc.add(stream)
             renegotiate(pc, remoteId: remoteId)
         }
+        CrashReporter.crumb("voice: startLocalAudio done")
     }
 
     func setMicEnabled(_ enabled: Bool) {

@@ -264,9 +264,16 @@ final class AppState: ObservableObject {
             if inRoom, !lastRoomId.isEmpty {
                 connection.send(.roomJoin(userId: uid, roomId: lastRoomId, no: nil))
             }
-            // 登录成功 = 链路可用 → 把上次崩溃的现场报给服务端（有则取走并清掉本地文件）
-            if let log = CrashReporter.consumeReport() {
-                connection.send(.crashReport(log: log))
+            // 登录成功 = 链路可用 → 把上次崩溃的现场报给服务端（有则取走并清掉本地文件）。
+            // 就算没有异常记录，面包屑也能说明上次会话死在哪一步（如 watchdog 强杀）。
+            let crashPart = CrashReporter.consumeReport()
+            let crumbPart = CrashReporter.tailCrumbs()
+            if crashPart != nil || crumbPart != nil {
+                var report = ""
+                if let crashPart { report += crashPart + "\n" }
+                if let crumbPart { report += "--- last actions ---\n" + crumbPart }
+                connection.send(.crashReport(log: String(report.prefix(8000))))
+                CrashReporter.clearCrumbs()
             }
 
         case let .profileOK(user):
@@ -586,6 +593,7 @@ final class AppState: ObservableObject {
     // MARK: - 房间内操作
 
     func takeSeat(_ seat: Int) {
+        CrashReporter.crumb("app: takeSeat \(seat)")
         connection.send(.seatChange(seat: seat))
         if seat >= 0 { enableMic() }
         // 换麦序顺手拉一次快照：座位变了房间状态就该立刻刷新
@@ -645,8 +653,10 @@ final class AppState: ObservableObject {
     }
 
     private func enableMic() {
+        CrashReporter.crumb("app: enableMic enter (micEnabled=\(micEnabled))")
         voice.requestMic { [weak self] granted in
             guard let self else { return }
+            CrashReporter.crumb("app: requestMic callback granted=\(granted)")
             if granted {
                 self.micEnabled = true
                 self.voice.setMicEnabled(true)
