@@ -86,12 +86,16 @@ final class VoiceEngine: NSObject {
         }
         CrashReporter.crumb("voice: switching category -> playAndRecord (factory=nil)")
         do {
+            // 注意：playAndRecord + voiceChat 模式下不带 .mixWithOthers ——
+            // 该组合在 iOS 26 上与 WebRTC 的 VPIO 重配冲突（面包屑实测死点）。
+            // 房间音乐是本 App 自己的 AVPlayer，走同一个会话，不受影响。
             try session.setCategory(.playAndRecord,
                                     mode: .voiceChat,
-                                    options: [.defaultToSpeaker, .allowBluetooth, .mixWithOthers])
+                                    options: [.defaultToSpeaker, .allowBluetooth])
             try session.setActive(true)
             audioMode = .talk
         } catch {
+            CrashReporter.crumb("voice: prepareSessionForRTC FAIL \(error.localizedDescription)")
             print("[Voice] 语音会话配置失败: \(error.localizedDescription)")
         }
     }
@@ -146,7 +150,7 @@ final class VoiceEngine: NSObject {
         do {
             try session.setCategory(.playAndRecord,
                                     mode: .voiceChat,
-                                    options: [.defaultToSpeaker, .allowBluetooth, .mixWithOthers])
+                                    options: [.defaultToSpeaker, .allowBluetooth])
             try session.setActive(true)
             audioMode = .talk
             applySpeakerPreference()

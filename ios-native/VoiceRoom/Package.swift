@@ -21,11 +21,13 @@ let package = Package(
         .library(name: "VoiceRoomKit", targets: ["VoiceRoom"])
     ],
     dependencies: [
-        // Google 官方 WebRTC 预编译包（约 100MB，首次解析需要联网）
+        // Google 官方 WebRTC 预编译包
         //
-        // 说明：这是目前 iOS 上最省事的 WebRTC 集成方式。
-        // 该包由 LiveKit 团队维护的 WebRTC 二进制镜像，版本号对应 Google WebRTC 的 M 版本。
-        .package(url: "https://github.com/stasel/WebRTC.git", from: "121.0.0")
+        // ⚠️ 必须保持跟进新版本：M121 是 2024 年的二进制，早于 iOS 26 的新
+        // CoreAudio/VoiceProcessingIO 行为，实测在 iOS 26 上「对运行中的音频单元
+        // 启动录音」会被系统直接干掉（开麦闪退，且任何异常钩子都抓不到）。
+        // M154（2026-09）已适配新系统。
+        .package(url: "https://github.com/stasel/WebRTC.git", from: "154.0.0")
     ],
     targets: [
         .target(

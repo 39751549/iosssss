@@ -1,5 +1,21 @@
 import Foundation
 import Darwin
+import UIKit
+
+/// 信号处理器专用的全局 fd：handler 里只允许 write 这个已打开的 fd，
+/// 不许碰 Swift 运行时（String/Date/FileManager 都会 malloc，信号上下文里会死锁或二次崩溃
+/// —— 上一版抓不到任何信号记录，大概率就是 handler 自己先崩了）。
+private var g_signalFD: Int32 = -1
+
+/// 各信号的静态字节标记（全局常量，handler 里只读不分配）
+private let g_sigNames: [Int32: [UInt8]] = [
+    SIGABRT: Array("SIG:6 SIGABRT\n".utf8),
+    SIGILL:  Array("SIG:4 SIGILL\n".utf8),
+    SIGTRAP: Array("SIG:5 SIGTRAP\n".utf8),
+    SIGBUS:  Array("SIG:10 SIGBUS\n".utf8),
+    SIGFPE:  Array("SIG:8 SIGFPE\n".utf8),
+    SIGSEGV: Array("SIG:11 SIGSEGV\n".utf8),
+]
 
 /// 崩溃捕获：NSException + 常见致命信号。
 ///
@@ -49,22 +65,27 @@ enum CrashReporter {
             try? text.write(to: CrashReporter.fileURL, atomically: true, encoding: .utf8)
         }
 
-        // 信号类崩溃（野指针 / 数组越界 / EXC_BAD_ACCESS）：handler 里只能用
-        // async-signal-safe 的 open/write，这里尽力写一行标识，够区分「是信号崩」即可。
+        // 信号类崩溃（野指针 / 数组越界 / EXC_BAD_ACCESS）：handler 里只用
+        // async-signal-safe 的 write，写一行「信号名」就交还原默认处理。
+        g_signalFD = open(crumbURL.path, O_WRONLY | O_CREAT | O_APPEND, 0644)
         for sig in [SIGABRT, SIGILL, SIGSEGV, SIGFPE, SIGBUS, SIGTRAP] {
             signal(sig) { s in
-                let line = "=== 岛 crash ===\n[signal] \(s)\n"
-                if let d = line.data(using: .utf8) {
-                    let fd = open(CrashReporter.fileURL.path, O_WRONLY | O_CREAT | O_TRUNC, 0644)
-                    if fd >= 0 {
-                        _ = d.withUnsafeBytes { ptr in write(fd, ptr.baseAddress, ptr.count) }
-                        close(fd)
+                if g_signalFD >= 0, let bytes = g_sigNames[s] {
+                    bytes.withUnsafeBufferPointer { buf in
+                        if let base = buf.baseAddress {
+                            _ = write(g_signalFD, base, buf.count)
+                        }
                     }
                 }
                 signal(s, SIG_DFL)
                 raise(s)
             }
         }
+
+        // 记一次设备信息：判断是否 iOS 新系统行为变化的关键依据
+        crumb("device: \(UIDevice.current.model) \(UIDevice.current.systemName) "
+            + UIDevice.current.systemVersion
+            + " build\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?")")
     }
 
     /// 取走上次崩溃的报告（有则返回内容并删除本地文件，避免重复上报）
