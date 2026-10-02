@@ -2,7 +2,7 @@ import SwiftUI
 
 /// 一起听歌面板
 ///
-/// 四个分区：搜索曲库 · 房间歌单 · 最近听歌 · 我的收藏
+/// 五个分区：歌曲排行榜 · 搜索曲库 · 房间歌单 · 最近听歌 · 我的收藏
 struct MusicSheet: View {
 
     let state: VRRoomState
@@ -11,10 +11,11 @@ struct MusicSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     enum Tab: String, CaseIterable, Identifiable {
-        case search, playlist, recent, favorites
+        case charts, search, playlist, recent, favorites
         var id: String { rawValue }
         var label: String {
             switch self {
+            case .charts:    return "🏆 榜单"
             case .search:    return "🔍 搜歌"
             case .playlist:  return "📃 歌单"
             case .recent:    return "🕘 最近"
@@ -23,7 +24,7 @@ struct MusicSheet: View {
         }
     }
 
-    @State private var tab: Tab = .search
+    @State private var tab: Tab = .charts
 
     // 搜索
     @State private var query = ""
@@ -43,6 +44,25 @@ struct MusicSheet: View {
     enum SearchState: Equatable {
         case idle, loading, empty, failed(String)
     }
+
+    // 榜单
+    enum ChartState: Equatable {
+        case idle, loading, failed(String)
+    }
+    @State private var chartList: [VRChartInfo] = []
+    @State private var chartId = ""
+    @State private var chartTracks: [VRChartTrack] = []
+    @State private var chartState: ChartState = .idle
+    @State private var chartsLoaded = false
+    @State private var chartTask: URLSessionDataTask?
+
+    // 歌词
+    @State private var showLyrics = false
+    @State private var lyricText: String?
+    @State private var lyricLoading = false
+    @State private var lyricTask: URLSessionDataTask?
+    /// 记住上次加载歌词的歌，切歌时重新拉
+    @State private var lyricForLibraryId = ""
 
     @ObservedObject private var cache = MusicCache.shared
     @ObservedObject private var history = MusicHistory.shared
@@ -65,6 +85,7 @@ struct MusicSheet: View {
                         playerBar
 
                         switch tab {
+                        case .charts:    chartsSection
                         case .search:    searchSection
                         case .playlist:  playlistSection
                         case .recent:    recentSection
@@ -96,11 +117,23 @@ struct MusicSheet: View {
         .onAppear {
             cache.refreshStats()
             if results.isEmpty { runSearch("") }
+            loadChartsIfNeeded()
         }
         .onDisappear {
             // 面板关掉就别让请求继续跑（尤其是用户已经离开房间的场景）
             searchTask?.cancel()
             searchDataTask?.cancel()
+            chartTask?.cancel()
+            lyricTask?.cancel()
+        }
+        .sheet(isPresented: $showLyrics) { lyricsSheet }
+        .onChange(of: showLyrics) { open in
+            if open { loadLyricIfNeeded() }
+        }
+        // 切歌后重置歌词缓存：下次打开歌词浮层会重新拉新歌的
+        .onChange(of: state.currentSong?.id) { _ in
+            lyricForLibraryId = ""
+            lyricText = nil
         }
     }
 
@@ -183,6 +216,20 @@ struct MusicSheet: View {
                             .foregroundColor(VRTheme.textDim)
                     }
                     Spacer()
+                    // 歌词（在线歌才有）
+                    if (state.currentSong?.libraryId ?? "").hasPrefix("gd|") {
+                        Button {
+                            showLyrics = true
+                        } label: {
+                            Text("词")
+                                .font(.system(size: 13, weight: .heavy))
+                                .foregroundColor(VRTheme.brand)
+                                .frame(width: 32, height: 32)
+                                .background(Circle().fill(Color.white.opacity(0.85)))
+                                .overlay(Circle().strokeBorder(VRTheme.brand.opacity(0.5), lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                    }
                     // 收藏
                     Button {
                         let added = history.toggleFavorite(
@@ -281,6 +328,208 @@ struct MusicSheet: View {
                     .strokeBorder(VRTheme.brand.opacity(0.6), lineWidth: 1)
             )
         }
+    }
+
+    // MARK: - 歌曲排行榜
+
+    private var chartsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // 榜单切换条
+            if !chartList.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(chartList) { c in
+                            Button {
+                                guard chartId != c.id else { return }
+                                loadChart(c.id)
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Text(c.icon).font(.system(size: 13))
+                                    Text(c.name).font(.system(size: 13, weight: .semibold))
+                                }
+                                .foregroundColor(chartId == c.id ? .white : VRTheme.textDim)
+                                .padding(.horizontal, 13)
+                                .frame(height: 32)
+                                .background(
+                                    Group {
+                                        if chartId == c.id {
+                                            Capsule().fill(VRTheme.brandGradient)
+                                        } else {
+                                            Capsule().fill(Color(hex: "27436B").opacity(0.07))
+                                        }
+                                    }
+                                )
+                                .overlay(Capsule().strokeBorder(chartId == c.id ? .clear : VRTheme.border, lineWidth: 1))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 2)
+                }
+            }
+
+            switch chartState {
+            case .loading:
+                hintBox("榜单加载中…")
+            case .failed(let msg):
+                VStack(spacing: 10) {
+                    hintBox(msg)
+                    Button("重新加载") { loadChart(chartId.isEmpty ? "3778678" : chartId) }
+                        .buttonStyle(VRButtonStyle(fullWidth: true))
+                }
+            case .idle:
+                if chartTracks.isEmpty {
+                    hintBox(chartList.isEmpty ? "榜单还没加载\n稍等一下就好" : "这份榜单暂时拉不到\n换一份试试")
+                } else {
+                    chartTrackList
+                }
+            }
+        }
+    }
+
+    private var chartTrackList: some View {
+        LazyVStack(alignment: .leading, spacing: 8) {
+            Text("\(chartTracks.count) 首 · 每日更新")
+                .font(.system(size: 12))
+                .foregroundColor(VRTheme.textDim)
+
+            ForEach(Array(chartTracks.enumerated()), id: \.element.id) { idx, track in
+                chartRow(rank: idx + 1, track: track)
+            }
+        }
+    }
+
+    /// 榜单行：名次（前三名奖牌色）+ 封面 + 歌名/歌手 + 点播/加入
+    private func chartRow(rank: Int, track: VRChartTrack) -> some View {
+        let isCurrent = state.currentSong?.libraryId == track.id
+        let rankColor: Color = {
+            switch rank {
+            case 1: return Color(hex: "F5B83D")   // 金
+            case 2: return Color(hex: "A8B4C4")   // 银
+            case 3: return Color(hex: "D08A5A")   // 铜
+            default: return VRTheme.textMute
+            }
+        }()
+
+        return HStack(spacing: 10) {
+            Text("\(rank)")
+                .font(.system(size: rank <= 3 ? 16 : 13, weight: .heavy, design: .rounded))
+                .foregroundColor(rankColor)
+                .frame(width: 24)
+
+            // 封面（服务端代理缓存，占位用音符底）
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(LinearGradient(colors: [VRTheme.brand.opacity(0.18), VRTheme.brand2.opacity(0.12)],
+                                         startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .frame(width: 44, height: 44)
+                if let url = track.coverURL {
+                    AsyncImage(url: url) { phase in
+                        if let img = phase.image {
+                            img.resizable().scaledToFill()
+                        } else {
+                            Text("🎵").font(.system(size: 17))
+                        }
+                    }
+                    .frame(width: 44, height: 44)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                } else {
+                    Text("🎵").font(.system(size: 17))
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(track.title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(isCurrent ? VRTheme.brand : VRTheme.text)
+                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(track.displayArtist)
+                        .font(.system(size: 11))
+                        .foregroundColor(VRTheme.textDim)
+                        .lineLimit(1)
+                    if !track.durationText.isEmpty {
+                        Text(track.durationText)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(VRTheme.textMute)
+                    }
+                }
+            }
+
+            Spacer()
+
+            Button("点播") { playNow(track.asLibrarySong) }
+                .buttonStyle(VRButtonStyle(kind: .primary))
+
+            Button("➕") { addToPlaylist(track.asLibrarySong) }
+                .buttonStyle(VRButtonStyle())
+        }
+        .padding(.vertical, 9)
+        .padding(.horizontal, 11)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(isCurrent ? VRTheme.brand.opacity(0.14) : Color(hex: "27436B").opacity(0.06))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(isCurrent ? VRTheme.brand.opacity(0.6) : VRTheme.border, lineWidth: 1)
+        )
+    }
+
+    // MARK: - 歌词
+
+    @ViewBuilder
+    private var lyricsSheet: some View {
+        ZStack {
+            LinearGradient(colors: [Color(hex: "1B1530"), Color(hex: "2A1746")],
+                           startPoint: .top, endPoint: .bottom)
+                .ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(state.currentSong?.title ?? "")
+                            .font(.system(size: 17, weight: .bold))
+                            .foregroundColor(.white)
+                            .lineLimit(1)
+                        if let song = state.currentSong {
+                            Text("由 \(song.by) 点播")
+                                .font(.system(size: 11))
+                                .foregroundColor(.white.opacity(0.55))
+                        }
+                    }
+                    Spacer()
+                    Button { showLyrics = false } label: {
+                        Text("✕")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(.white.opacity(0.7))
+                            .frame(width: 32, height: 32)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 18)
+                .padding(.bottom, 8)
+
+                if lyricLoading {
+                    Spacer()
+                    Text("歌词加载中…").foregroundColor(.white.opacity(0.5))
+                    Spacer()
+                } else if let lines = lyricLines, !lines.isEmpty {
+                    LyricScrollView(lines: lines, player: player)
+                } else {
+                    Spacer()
+                    Text(lyricText != nil ? "纯音乐，请欣赏 🎧" : "这首歌暂时拿不到歌词")
+                        .foregroundColor(.white.opacity(0.55))
+                    Spacer()
+                }
+            }
+        }
+    }
+
+    /// 当前歌的解析后歌词（ song 变了就置空，触发重新拉取）
+    private var lyricLines: [VRLyricLine]? {
+        guard let raw = lyricText else { return nil }
+        return VRLyric.parse(raw)
     }
 
     // MARK: - 搜索
@@ -711,6 +960,46 @@ struct MusicSheet: View {
         )
     }
 
+    /// 歌词浮层里的滚动歌词（高亮当前行 + 自动居中滚动）
+    private struct LyricScrollView: View {
+        let lines: [VRLyricLine]
+        @ObservedObject var player: MusicPlayer
+
+        var body: some View {
+            let active = VRLyric.activeIndex(in: lines, at: player.position)
+            ScrollViewReader { proxy in
+                ScrollView(showsIndicators: false) {
+                    LazyVStack(spacing: 18) {
+                        Color.clear.frame(height: 40).id(-1)
+                        ForEach(Array(lines.enumerated()), id: \.offset) { i, line in
+                            Text(line.text.isEmpty ? "♪" : line.text)
+                                .font(.system(size: i == active ? 17 : 14.5,
+                                              weight: i == active ? .bold : .medium))
+                                .foregroundColor(i == active ? .white : .white.opacity(0.45))
+                                .multilineTextAlignment(.center)
+                                .lineLimit(2)
+                                .id(i)
+                                .animation(.easeOut(duration: 0.25), value: active)
+                        }
+                        Color.clear.frame(height: 160).id(9999)
+                    }
+                    .padding(.horizontal, 26)
+                }
+                .onChange(of: active) { a in
+                    guard a >= 0 else { return }
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        proxy.scrollTo(a, anchor: .center)
+                    }
+                }
+                .onAppear {
+                    // 打开时先对准当前进度
+                    let now = VRLyric.activeIndex(in: lines, at: player.position)
+                    if now >= 0 { proxy.scrollTo(now, anchor: .center) }
+                }
+            }
+        }
+    }
+
     // MARK: - 组件
 
     private func hintBox(_ text: String) -> some View {
@@ -728,6 +1017,91 @@ struct MusicSheet: View {
     }
 
     // MARK: - 动作
+
+    /// 拉榜单清单（静态接口，一次就好），然后默认选第一份
+    private func loadChartsIfNeeded() {
+        guard !chartsLoaded else { return }
+        chartsLoaded = true
+        MusicAPI.charts { result in
+            switch result {
+            case .success(let list):
+                chartList = list
+                if chartId.isEmpty {
+                    loadChart(list.first?.id ?? "3778678")
+                }
+            case .failure:
+                loadChart("3778678")   // 清单拿不到也直接试热歌榜
+            }
+        }
+    }
+
+    /// 榜单指纹：用来对比「后台刷新」和「缓存/当前显示」是否真的变了。
+    /// 榜单每日更新，绝大多数时候两次拉取完全一致 —— 一致就什么都不动，
+    /// 避免打开面板时列表闪一下重排（封面图重新加载会像「闪屏」）。
+    private static func chartFingerprint(_ tracks: [VRChartTrack]) -> String {
+        tracks.map { $0.id }.joined(separator: ",")
+    }
+
+    /// 拉一份榜单曲目：本地缓存秒出 → 后台刷新 → 内容有变化才替换。
+    /// 服务端还有一层 30 分钟缓存，所以即使反复进面板也几乎不耗 GD 额度。
+    private func loadChart(_ id: String) {
+        chartTask?.cancel()
+        chartId = id
+
+        // 1) 缓存优先：立即渲染，绝不转圈
+        if let cached = VRChartCache.load(id), !cached.tracks.isEmpty {
+            chartTracks = cached.tracks
+            chartState = .idle
+        } else {
+            chartState = .loading   // 完全没来过才有这个状态
+        }
+
+        // 2) 后台刷新（静默：失败不打断已显示的内容）
+        chartTask = MusicAPI.chart(id) { result in
+            guard chartId == id else { return }   // 期间已切到别的榜
+            switch result {
+            case .success(let detail):
+                guard detail.ok else {
+                    if chartTracks.isEmpty {
+                        chartState = .failed(detail.msg ?? "榜单拉取失败")
+                    }
+                    return
+                }
+                if Self.chartFingerprint(detail.tracks) != Self.chartFingerprint(chartTracks) {
+                    chartTracks = detail.tracks
+                    VRChartCache.save(detail)
+                }
+                chartState = .idle
+            case .failure(let err):
+                if (err as NSError).code == NSURLErrorCancelled { return }
+                if chartTracks.isEmpty {
+                    chartState = .failed(err.localizedDescription)
+                }
+                // 已有缓存内容就静默忽略 —— 旧榜单比报错卡片好用
+            }
+        }
+    }
+
+    /// 拉当前歌的歌词（在线歌才有）
+    private func loadLyricIfNeeded() {
+        guard let song = state.currentSong, let libId = song.libraryId, !libId.isEmpty else {
+            lyricText = nil
+            return
+        }
+        guard lyricForLibraryId != libId else { return }
+        lyricForLibraryId = libId
+        lyricText = nil
+        guard libId.hasPrefix("gd|") else { return }   // 本地曲库没有歌词
+        lyricLoading = true
+        lyricTask?.cancel()
+        lyricTask = MusicAPI.lyric(libraryId: libId) { result in
+            lyricLoading = false
+            switch result {
+            case .success(let raw): lyricText = raw
+            case .failure: lyricText = ""   // 空串 = 拿不到，显示兜底文案
+            }
+        }
+    }
 
     private func runSearch(_ q: String) {
         searchState = .loading

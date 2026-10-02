@@ -675,6 +675,26 @@ input, textarea { outline: none; }
 .song-meta .st { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .song-meta .sb { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
 
+/* 歌曲排行榜 */
+.rank-item {
+  display: flex; align-items: center; gap: 10px; padding: 9px 11px;
+  border-radius: 13px; background: rgba(255,255,255,.06); border: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+.rank-item .rank-num {
+  flex: none; width: 22px; text-align: center;
+  font-size: 12.5px; font-weight: 800; color: var(--text-mute);
+  font-variant-numeric: tabular-nums;
+}
+.rank-item .rank-num.r1 { font-size: 17px; color: #F5B83D; }
+.rank-item .rank-num.r2 { font-size: 16px; color: #A8B4C4; }
+.rank-item .rank-num.r3 { font-size: 15px; color: #D08A5A; }
+.rank-item .rcover {
+  flex: none; width: 42px; height: 42px; border-radius: 9px; object-fit: cover;
+  background: linear-gradient(135deg, rgba(123,107,255,.3), rgba(79,195,247,.2));
+}
+.rank-item .rcover.rph { display: flex; align-items: center; justify-content: center; font-size: 17px; }
+
 /* 玩家列表 */
 .member-item {
   display: flex; align-items: center; gap: 11px; padding: 11px;

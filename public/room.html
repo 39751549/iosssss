@@ -91,10 +91,16 @@
     <div id="nowPlaying" style="margin-bottom:12px"></div>
 
     <div class="music-tabs" id="musicTabs">
+      <button class="mtab" data-tab="top" onclick="switchMusicTab('top')">🏆 榜单</button>
       <button class="mtab sel" data-tab="search" onclick="switchMusicTab('search')">🔍 搜索</button>
       <button class="mtab" data-tab="playlist" onclick="switchMusicTab('playlist')">📻 歌单</button>
       <button class="mtab" data-tab="fav" onclick="switchMusicTab('fav')">❤️ 收藏</button>
       <button class="mtab" data-tab="recent" onclick="switchMusicTab('recent')">🕘 最近</button>
+    </div>
+
+    <div class="mtab-pane" id="pane-top" style="display:none">
+      <div class="src-picker" id="chartPicker"></div>
+      <div id="chartList" style="margin-top:12px"></div>
     </div>
 
     <div class="mtab-pane" id="pane-search">
@@ -820,11 +826,12 @@ let myFavs = [], myRecent = [], myBgs = [];
 function switchMusicTab(t) {
   curMusicTab = t;
   document.querySelectorAll('#musicTabs .mtab').forEach(b => b.classList.toggle('sel', b.dataset.tab === t));
-  ['search', 'playlist', 'fav', 'recent'].forEach(k => {
+  ['top', 'search', 'playlist', 'fav', 'recent'].forEach(k => {
     const p = document.getElementById('pane-' + k);
     if (p) p.style.display = (k === t) ? '' : 'none';
   });
   if (t === 'fav' || t === 'recent') send({ type: 'music:favs' });
+  if (t === 'top') loadTopCharts();
 }
 
 function favSourceName(m) {
@@ -852,8 +859,125 @@ function songItemHtml(m, opt) {
     </div>`;
 }
 
+/* ---------- 歌曲排行榜（GD 榜单；本地缓存秒开，后台刷新有变化才重绘） ---------- */
+const CHART_FALLBACK = [
+  { id: '3778678',   name: '热歌榜', icon: '🔥' },
+  { id: '3779629',   name: '新歌榜', icon: '🆕' },
+  { id: '19723756',  name: '飙升榜', icon: '🚀' },
+  { id: '2884035',   name: '原创榜', icon: '🎤' },
+  { id: '991319590', name: '说唱榜', icon: '🎧' },
+  { id: '10520166',  name: '国风榜', icon: '🏮' }
+];
+let chartMeta = CHART_FALLBACK;   // 榜单清单（服务端静态返回，拿到就覆盖）
+let curChartId = '';
+let chartTracks = [];             // 当前榜单曲目（kind='top' 的点播/加入走这里）
+let chartLoading = false;
+
+function loadTopCharts() {
+  fetch('/api/music/top').then(r => r.json()).then(j => {
+    if (j && j.ok && Array.isArray(j.charts) && j.charts.length) {
+      chartMeta = j.charts;
+      renderChartChips();
+    }
+  }).catch(() => {});
+  renderChartChips();                       // 先画兜底清单，清单接口不卡面板
+  loadChart(curChartId || (chartMeta[0] && chartMeta[0].id) || '3778678');
+}
+
+function renderChartChips() {
+  const box = document.getElementById('chartPicker'); if (!box) return;
+  box.innerHTML = chartMeta.map(c =>
+    `<span class="src-chip ${c.id === curChartId ? 'sel' : ''}" onclick="loadChart('${c.id}')">${c.icon || '🏆'} ${VR.esc(c.name)}</span>`
+  ).join('');
+}
+
+function chartCacheKey(id) { return 'vr_chart_' + id; }
+
+function chartFingerprint(tracks) { return (tracks || []).map(t => t.id).join(','); }
+
+function loadChart(id) {
+  if (!id || chartLoading) return;
+  curChartId = id;
+  renderChartChips();
+  const box = document.getElementById('chartList'); if (!box) return;
+
+  // 1) 本地缓存秒出（永不过期，旧榜单也比转圈强）
+  let cached = null;
+  try { cached = JSON.parse(VR.LS.get(chartCacheKey(id), 'null')); } catch {}
+  if (cached && Array.isArray(cached.tracks) && cached.tracks.length) {
+    chartTracks = cached.tracks;
+    renderChartList(cached.name || '');
+  } else if (!chartTracks.length) {
+    box.innerHTML = '<div class="empty-hint" style="padding:14px 0">榜单加载中…</div>';
+  }
+
+  // 2) 后台刷新：返回后对比指纹，没变化就不动 DOM（避免闪一下重排）
+  chartLoading = true;
+  fetch('/api/music/top?id=' + encodeURIComponent(id)).then(r => r.json()).then(j => {
+    if (curChartId !== id) return;
+    if (!j || !j.ok) {
+      if (!chartTracks.length) box.innerHTML = `<div class="empty-hint" style="padding:14px 0">${VR.esc((j && j.msg) || '榜单拉取失败')}</div>`;
+      return;
+    }
+    const fp = chartFingerprint(j.tracks);
+    if (fp !== chartFingerprint(chartTracks)) {
+      chartTracks = j.tracks || [];
+      VR.LS.set(chartCacheKey(id), JSON.stringify({ name: j.name, tracks: chartTracks }));
+      renderChartList(j.name || '');
+    } else if (!box.querySelector('.rank-item')) {
+      renderChartList(j.name || '');   // 缓存空但内容一致（首次）
+    }
+  }).catch(() => {
+    if (curChartId === id && !chartTracks.length) {
+      box.innerHTML = '<div class="empty-hint" style="padding:14px 0">榜单拉取失败，稍后再试</div>';
+    }
+  }).finally(() => { chartLoading = false; });
+}
+
+function renderChartList(name) {
+  const box = document.getElementById('chartList'); if (!box) return;
+  if (!chartTracks.length) {
+    box.innerHTML = '<div class="empty-hint" style="padding:14px 0">这份榜单暂时拉不到<br>换一份试试</div>';
+    return;
+  }
+  box.innerHTML = chartTracks.map((t, i) => {
+    const rank = i + 1;
+    const rc = rank === 1 ? 'r1' : rank === 2 ? 'r2' : rank === 3 ? 'r3' : '';
+    const pic = t.picId ? `/api/music/pic?id=${encodeURIComponent(t.picId)}&size=300` : '';
+    return `
+      <div class="rank-item">
+        <span class="rank-num ${rc}">${rank}</span>
+        ${pic
+          ? `<img class="rcover" src="" data-pic="${VR.esc(pic)}" alt="" onerror="this.style.visibility='hidden'">`
+          : '<span class="rcover rph">🎵</span>'}
+        <div class="song-meta">
+          <div class="st">${VR.esc(t.title)}</div>
+          <div class="sb">${VR.esc(t.artist || '未知')}${t.duration ? ' · ' + fmtDur(t.duration) : ''}</div>
+        </div>
+        <button class="btn btn-sm" onclick="addItemAt('top',${i})">加入</button>
+        <button class="btn btn-sm btn-primary" onclick="playItemAt('top',${i})">点播</button>
+      </div>`;
+  }).join('');
+  // 封面懒加载：进视口才去要直链（服务端有缓存，不费 GD 额度）
+  const io = renderChartList._io || (renderChartList._io = new IntersectionObserver(es => {
+    es.forEach(e => {
+      if (!e.isIntersecting) return;
+      const img = e.target; io.unobserve(img);
+      fetch(img.dataset.pic).then(r => r.json()).then(j => { if (j && j.ok && j.url) img.src = j.url; })
+        .catch(() => {});
+    });
+  }, { rootMargin: '120px' }));
+  box.querySelectorAll('img.rcover[data-pic]').forEach(img => io.observe(img));
+}
+
+function fmtDur(ms) {
+  const s = Math.round(ms / 1000);
+  return (s / 60 | 0) + ':' + String(s % 60).padStart(2, '0');
+}
+
 function itemOf(kind, i) {
   if (kind === 'search') return lastSearchList[i];
+  if (kind === 'top') return chartTracks[i];
   if (kind === 'fav') return myFavs[i];
   if (kind === 'recent') return myRecent[i];
   return null;

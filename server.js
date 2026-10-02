@@ -39,10 +39,38 @@ const GD_SOURCES = [
 ];
 const gdUrlCache = new Map(); // key: source|id|br -> { url, at }
 
+/* 播放音质：999 = 24bit 无损（740 = 16bit）。999 拿不到时回落 320。 */
+const GD_BR = 999;
+
+/* ---------- GD 限流：官方 5 分钟 50 次，窗口 45 次留余量；429 长退避 ---------- */
+const GD_WINDOW_MS = 300 * 1000;
+const GD_WINDOW_MAX = 45;
+const gdHits = [];
+let gdBlockUntil = 0;
+
+function gdThrottle() {
+  const now = Date.now();
+  if (now < gdBlockUntil) {
+    throw new Error('音乐接口限流中，' + Math.ceil((gdBlockUntil - now) / 1000) + ' 秒后恢复');
+  }
+  while (gdHits.length && now - gdHits[0] > GD_WINDOW_MS) gdHits.shift();
+  if (gdHits.length >= GD_WINDOW_MAX) {
+    throw new Error('音乐接口请求太频繁，请稍后再试');
+  }
+  gdHits.push(now);
+}
+
 function gdFetchJson(params) {
   return new Promise((resolve, reject) => {
+    try { gdThrottle(); } catch (e) { return reject(e); }
     const qs = Object.entries(params).map(([k, v]) => k + '=' + encodeURIComponent(v)).join('&');
     const req = https.get(GD_API + '?' + qs, { timeout: 12000 }, res => {
+      if (res.statusCode === 429) {
+        // 长退避：被官方限流了，60 秒内不再打过去
+        gdBlockUntil = Date.now() + 60 * 1000;
+        res.resume();
+        return reject(new Error('音乐接口限流中，请稍后再试'));
+      }
       if (res.statusCode !== 200) { res.resume(); return reject(new Error('GD API HTTP ' + res.statusCode)); }
       let raw = '';
       res.setEncoding('utf8');
@@ -69,15 +97,100 @@ async function gdSearch(name, source, count) {
 }
 
 async function gdResolveUrl(source, songId, br, force) {
-  const key = source + '|' + songId + '|' + (br || 320);
+  const want = br || GD_BR;
+  const key = source + '|' + songId + '|' + want;
   const hit = gdUrlCache.get(key);
   // 直链有时效：缓存 3 分钟（原先 10 分钟会把过期链接当有效返回）
   if (!force && hit && Date.now() - hit.at < 3 * 60 * 1000) return hit.url;
-  const j = await gdFetchJson({ types: 'url', source, id: String(songId), br: String(br || 320) });
+  // 先按目标音质解析（999=24bit 无损），拿不到再降 320
+  let j = null;
+  for (const b of [want, 320]) {
+    try {
+      j = await gdFetchJson({ types: 'url', source, id: String(songId), br: String(b) });
+      if (j && j.url) break;
+    } catch (e) {
+      if (b === 320) throw e;
+      j = null;
+    }
+  }
   if (!j || !j.url) throw new Error('拿不到播放地址');
   gdUrlCache.set(key, { url: j.url, at: Date.now() });
   if (gdUrlCache.size > 500) gdUrlCache.clear();
   return j.url;
+}
+
+/* ================= 榜单 / 歌词 / 封面（同一 GD 接口，全部走限流+缓存） ================= */
+
+// 网易云官方榜单 ID（云音乐固定歌单）
+const GD_CHARTS = [
+  { id: '3778678',   name: '热歌榜', icon: '🔥' },
+  { id: '3779629',   name: '新歌榜', icon: '🆕' },
+  { id: '19723756',  name: '飙升榜', icon: '🚀' },
+  { id: '2884035',   name: '原创榜', icon: '🎤' },
+  { id: '991319590', name: '说唱榜', icon: '🎧' },
+  { id: '10520166',  name: '国风榜', icon: '🏮' }
+];
+const gdChartCache = new Map(); // 榜单 30 分钟（官方每日更新，不必常拉）
+const gdLyricCache = new Map(); // 歌词 1 小时
+const gdPicCache  = new Map();  // 封面 URL 永久缓存（进程内，容量兜底清理）
+
+/** 拉一份榜单，映射成和搜索结果同构的歌曲列表（libraryId 直接可点播） */
+async function gdChart(chartId) {
+  const meta = GD_CHARTS.find(c => c.id === String(chartId));
+  if (!meta) throw new Error('未知榜单');
+  const hit = gdChartCache.get(chartId);
+  if (hit && Date.now() - hit.at < 30 * 60 * 1000) {
+    return { id: meta.id, name: meta.name, icon: meta.icon, tracks: hit.data };
+  }
+  const j = await gdFetchJson({ types: 'playlist', source: 'netease', id: String(chartId) });
+  const pl = j && j.playlist;
+  const raw = (pl && Array.isArray(pl.tracks)) ? pl.tracks : [];
+  const tracks = raw.slice(0, 30).map(t => {
+    const ar = Array.isArray(t.ar) ? t.ar : (Array.isArray(t.artists) ? t.artists : []);
+    const al = (t.al && typeof t.al === 'object') ? t.al : (t.album || {});
+    // 封面 ID 必须用字符串字段：数字形式的 picId 超出 JS 安全整数，会被 JSON 精度截断
+    const picId = String(al.pic_str || al.picId_str
+      || (typeof al.pic === 'string' ? al.pic : '')).replace(/[^0-9]/g, '').slice(0, 40);
+    return {
+      id: 'gd|netease|' + t.id,
+      title: String(t.name || '未知歌曲').slice(0, 80),
+      artist: ar.map(a => a && a.name).filter(Boolean).join(' / ').slice(0, 80),
+      album: String(al.name || '').slice(0, 60),
+      picId,
+      duration: Math.round(Number(t.dt || t.duration || 0))
+    };
+  });
+  gdChartCache.set(chartId, { at: Date.now(), data: tracks });
+  if (gdChartCache.size > 40) gdChartCache.clear();
+  return { id: meta.id, name: meta.name, icon: meta.icon, tracks };
+}
+
+/** 歌词（LRC 文本） */
+async function gdLyric(source, songId) {
+  const key = source + '|' + songId;
+  const hit = gdLyricCache.get(key);
+  if (hit && Date.now() - hit.at < 60 * 60 * 1000) return hit.data;
+  const j = await gdFetchJson({ types: 'lyric', source, id: String(songId) });
+  const lyric = String((j && j.lyric) || '');
+  if (!lyric) throw new Error('这首歌没有歌词');
+  gdLyricCache.set(key, { at: Date.now(), data: lyric });
+  if (gdLyricCache.size > 300) gdLyricCache.clear();
+  return lyric;
+}
+
+/** 封面直链（返回 JSON 里的 url，客户端直接 <img>/AsyncImage） */
+async function gdPic(picId, size) {
+  const s = String(picId || '').replace(/[^0-9]/g, '').slice(0, 40);
+  if (!s) throw new Error('封面 ID 无效');
+  const key = s + '@' + size;
+  const hit = gdPicCache.get(key);
+  if (hit && Date.now() - hit.at < 30 * 24 * 3600 * 1000) return hit.url;
+  const j = await gdFetchJson({ types: 'pic', source: 'netease', id: s, size: String(size) });
+  const u = j && j.url;
+  if (!u) throw new Error('拿不到封面');
+  gdPicCache.set(key, { url: u, at: Date.now() });
+  if (gdPicCache.size > 800) gdPicCache.clear();
+  return u;
 }
 
 /** 解析歌单条目的真实播放地址（远端歌实时解析，本地歌原样返回） */
@@ -85,7 +198,7 @@ async function resolveSongUrl(song) {
   if (!song || !song.remote || !song.libraryId) return song ? song.url : '';
   try {
     const [, source, songId] = String(song.libraryId).split('|');
-    song.url = await gdResolveUrl(source, songId, 320);
+    song.url = await gdResolveUrl(source, songId);
     song.resolvedAt = Date.now();
   } catch { /* 保留旧 url 或空 */ }
   return song.url;
@@ -96,7 +209,7 @@ async function forceResolveSongUrl(song) {
   if (!song || !song.remote || !song.libraryId) return song ? song.url : '';
   const [, source, songId] = String(song.libraryId).split('|');
   try {
-    song.url = await gdResolveUrl(source, songId, 320, true);
+    song.url = await gdResolveUrl(source, songId, undefined, true);
     song.resolvedAt = Date.now();
   } catch { /* 保留旧 url */ }
   return song.url;
@@ -547,6 +660,32 @@ const server = http.createServer((req, res) => {
     return gdSearch(q, gdSource, 20)
       .then(gd => finish(gd, ''))
       .catch(e => finish([], e.message || '在线曲库暂不可用'));
+  }
+
+  /* ---------- 音乐扩展：榜单 / 歌词 / 封面（GD Studio，无需登录） ---------- */
+  if (pathname === '/api/music/top') {
+    const id = (url.searchParams.get('id') || '').trim();
+    if (!id) {
+      return send(res, 200, JSON.stringify({ ok: true, br: GD_BR, charts: GD_CHARTS }));
+    }
+    return gdChart(id)
+      .then(d => send(res, 200, JSON.stringify({ ok: true, id: d.id, name: d.name, icon: d.icon, tracks: d.tracks })))
+      .catch(e => send(res, 200, JSON.stringify({ ok: false, msg: e.message || '榜单拉取失败' })));
+  }
+  if (pathname === '/api/music/lyric') {
+    const libId = (url.searchParams.get('id') || '').trim();
+    const parts = parseGdLibraryId(libId);
+    if (!parts) return send(res, 200, JSON.stringify({ ok: false, msg: '仅在线歌曲支持歌词' }));
+    return gdLyric(parts.source, parts.songId)
+      .then(lyric => send(res, 200, JSON.stringify({ ok: true, lyric })))
+      .catch(e => send(res, 200, JSON.stringify({ ok: false, msg: e.message || '歌词拉取失败' })));
+  }
+  if (pathname === '/api/music/pic') {
+    const picId = (url.searchParams.get('id') || '').trim();
+    const size = parseInt(url.searchParams.get('size') || '300', 10) || 300;
+    return gdPic(picId, Math.min(Math.max(size, 60), 1300))
+      .then(u => send(res, 200, JSON.stringify({ ok: true, url: u })))
+      .catch(e => send(res, 200, JSON.stringify({ ok: false, msg: e.message || '封面拉取失败' })));
   }
 
   /* ---------- 音频流式播放（支持 Range，iOS 需要） ---------- */
