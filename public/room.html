@@ -263,10 +263,15 @@ const RTC_CONFIG = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 })();
 
 function connectWS() {
+  // 服务端 auth 是账号+密码制：没有存档凭据说明登录态已失效，回大厅重新登录。
+  // （旧的 {type:'auth', userId} 裸登录协议已下线，发了也会被拒。）
+  const saved = VR.getCredentials();
+  if (!saved.username || !saved.password) { location.href = '/'; return; }
+
   const ws = VR.connect(onMsg, () => {
-    ws.send(JSON.stringify({ type: 'auth', userId: USER_ID }));
-    ws.send(JSON.stringify({ type: 'user:mybgs', userId: USER_ID }));
-    ws.send(JSON.stringify({ type: 'room:join', userId: USER_ID, roomId }));
+    // 先 auth，等 auth:ok 确认账号有效后再 join ——
+    // 直接 join 可能撞上「store 里还没这个用户」（换设备/登录态过期）导致进房失败。
+    ws.send(JSON.stringify(VR.authPayload(saved.username, saved.password)));
   }, () => {
     VR.toast('连接断开，正在重连…', 'err');
     setTimeout(connectWS, 2200);
@@ -279,7 +284,12 @@ function send(o) { if (window.WS && window.WS.readyState === 1) window.WS.send(J
 function onMsg(m) {
   switch (m.type) {
     case 'auth:ok':
-      ME = m.data.user; giftList = m.data.giftList || []; VR.LS.set('user', ME);
+      // 账号确认有效：刷新本地身份（服务端 userId 为准），再拉背景库、进房
+      USER_ID = m.data.userId;
+      ME = m.data.user; giftList = m.data.giftList || [];
+      VR.LS.set('userId', USER_ID); VR.LS.set('user', ME);
+      send({ type: 'user:mybgs', userId: USER_ID });
+      send({ type: 'room:join', userId: USER_ID, roomId });
       break;
 
     case 'join:ok':

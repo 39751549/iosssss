@@ -40,20 +40,17 @@
       <p>和朋友一起开黑聊天 · 听歌 · 送礼</p>
     </div>
     <div class="card">
-      <div class="card-title">👋 起个昵称就能进</div>
+      <div class="card-title">👋 账号登录 <span class="sub">新账号输入后自动注册</span></div>
       <div class="form-row">
-        <input class="input" id="loginName" placeholder="输入昵称（最多 20 字）" maxlength="20">
+        <input class="input" id="loginName" placeholder="账号（2-24 位字母/数字/下划线/中文）" maxlength="24" autocomplete="username">
       </div>
       <div class="form-row">
-        <div class="seg" id="loginGender" style="margin-bottom:0">
-          <button data-g="male">♂ 男生</button>
-          <button data-g="female">♀ 女生</button>
-          <button data-g="secret" class="active">保密</button>
-        </div>
+        <input class="input" id="loginPwd" type="password" placeholder="密码（最长 64 位）" maxlength="64" autocomplete="current-password"
+               onkeydown="if(event.key==='Enter')doLogin()">
       </div>
       <button class="btn btn-primary btn-block" style="margin-top:16px" onclick="doLogin()">进入大厅</button>
       <div class="tip" style="margin-top:14px">
-        <b>提示：</b>昵称和资料只保存在你自己的手机上，不上传任何个人信息。
+        <b>提示：</b>首次登录即注册。账号密码只保存在你自己设备上，换设备登录同一个账号可找回名片和金币。
       </div>
     </div>
     <div class="card">
@@ -178,17 +175,15 @@
 <script src="/js/common.js"></script>
 <script>
 let ME = null;      // 当前用户对象
-let USER_ID = null; // 持久 userId
+let USER_ID = null; // 服务端下发的 userId（登录后覆盖）
 let WS = null;
 let selectedBg = VR.DEFAULT_BG;
-let loginGender = 'secret';
 let online = false;
 
 /* ============ 初始化 ============ */
 (function init() {
-  USER_ID = VR.LS.get('userId', null);
   const cached = VR.LS.get('user', null);
-  const firstName = VR.LS.get('name', '');
+  const saved = VR.getCredentials();
 
   // 渲染背景选择器
   document.getElementById('bgPicker').innerHTML = VR.BACKGROUNDS.map(b =>
@@ -197,21 +192,20 @@ let online = false;
      </div>`).join('');
   pickBg(VR.DEFAULT_BG);
 
-  // 性别切换
-  bindGender('loginGender', v => loginGender = v);
+  // 性别切换（编辑名片用）
   bindGender('editGender', v => editGenderSel = v);
 
   // 头像上传
   document.getElementById('avatarFile').addEventListener('change', onAvatarFile);
 
-  if (firstName) document.getElementById('loginName').value = firstName;
+  if (cached && saved.username) {
+    // 有缓存先渲染大厅（离线也能看到上次的名片），连上后静默重登校准
+    ME = cached;
+    USER_ID = VR.LS.get('userId', null);
+    renderLobby();
+  }
 
   connect();
-  if (USER_ID && cached) {
-    // 有缓存直接进大厅
-    ME = cached;
-    setTimeout(() => { WS && WS.send(JSON.stringify({ type: 'auth', userId: USER_ID })); }, 300);
-  }
 })();
 
 function bindGender(id, cb) {
@@ -227,8 +221,13 @@ function bindGender(id, cb) {
 function connect() {
   WS = VR.connect(onMsg, () => {
     online = true;
-    if (USER_ID) WS.send(JSON.stringify({ type: 'auth', userId: USER_ID }));
-    if (ME) loadRooms();
+    // 有存档凭据就静默重登（刷新/断线重连都不用再输密码）
+    const saved = VR.getCredentials();
+    if (saved.username && saved.password) {
+      send(VR.authPayload(saved.username, saved.password));
+    } else if (ME) {
+      loadRooms();
+    }
   }, () => {
     online = false;
     if (ME) VR.toast('连接已断开，正在重连…', 'err');
@@ -295,10 +294,14 @@ function onMsg(m) {
 /* ============ 登录 ============ */
 function doLogin() {
   const name = document.getElementById('loginName').value.trim();
-  if (!name) return VR.toast('请输入昵称', 'err');
+  const pwd = document.getElementById('loginPwd').value;
+  if (!/^[0-9a-z_\u4e00-\u9fa5]{2,24}$/.test(name)) {
+    return VR.toast('账号需 2-24 位字母/数字/下划线/中文', 'err');
+  }
+  if (!pwd) return VR.toast('请输入密码', 'err');
   if (!online) return VR.toast('还没连上服务器，稍等一下', 'err');
-  VR.LS.set('name', name);
-  send({ type: 'auth', userId: USER_ID || '', profile: { name, gender: loginGender } });
+  VR.saveCredentials(name, pwd);
+  send(VR.authPayload(name, pwd));
 }
 
 function doVipLogin() {

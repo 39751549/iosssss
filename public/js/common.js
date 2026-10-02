@@ -275,9 +275,42 @@ const VR = (() => {
     }
   }
 
+  /* ---------- 账号会话 ----------
+   * 服务端 auth 已改为账号+密码（新账号自动注册）。
+   * 凭据持久化在 LS 里：断线重连 / 刷新页面都拿它静默重登，
+   * 不再需要旧的「userId 裸登录」——那条路服务端已经关了。
+   */
+  function deviceId() {
+    let id = LS.get('deviceId', null);
+    if (!id) {
+      id = 'web_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+      LS.set('deviceId', id);
+    }
+    return id;
+  }
+  function getCredentials() {
+    return {
+      username: LS.get('username', ''),
+      password: LS.get('password', '')
+    };
+  }
+  function saveCredentials(username, password) {
+    LS.set('username', String(username || ''));
+    LS.set('password', String(password || ''));
+  }
+  function clearCredentials() {
+    LS.set('username', '');
+    LS.set('password', '');
+  }
+  /** 服务端 auth 消息的标准 payload（带 deviceId，同机重连不提示顶号） */
+  function authPayload(username, password) {
+    return { type: 'auth', username: String(username || ''), password: String(password || ''), deviceId: deviceId() };
+  }
+
   return { LS, toast, esc, avatarHtml, genAvatar, avatarColor, hhmm, connect,
            openSheet, closeSheet, openModal, closeModal, fileToCompressedDataURL,
            GENDER, genderIcon, BACKGROUNDS, DEFAULT_BG, findBg, isImageBg, isCustomBg,
            bgStyle, resolveBg, applyBackground, shortNum, haptic, copy, vipBadge, vipName,
-           roomThumbStyle, roomNoClass };
+           roomThumbStyle, roomNoClass,
+           deviceId, getCredentials, saveCredentials, clearCredentials, authPayload };
 })();
