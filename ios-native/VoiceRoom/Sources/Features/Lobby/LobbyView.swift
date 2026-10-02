@@ -1,5 +1,17 @@
 import SwiftUI
 
+/// 版本信息：从 Bundle 读取（来源是 Info.plist，最终由工程里的
+/// MARKETING_VERSION / CURRENT_PROJECT_VERSION 决定）。
+/// 设置页显示它，是为了让用户一眼确认「装上的是不是最新包」。
+enum AppInfo {
+    static var versionText: String {
+        let info = Bundle.main.infoDictionary
+        let ver = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        return "v\(ver) (\(build))"
+    }
+}
+
 /// 大厅：底部三个分组（首页 / 房间 / 设置）
 ///
 /// 以前所有卡片（资料、加入房间、我的房间、房间列表、其他设置）堆在一个 ScrollView 里，
@@ -729,6 +741,13 @@ struct LobbyView: View {
                     .padding(.top, 1)
                 }
             }
+
+            // 版本号：App 内直接可见，方便确认「这次装上的是不是新包」
+            //（Info.plist 曾写死 1.0.0 导致系统设置里永远显示 1.0，无法分辨新旧包）
+            Text(AppInfo.versionText)
+                .font(.system(size: 11.5, design: .monospaced))
+                .foregroundColor(VRTheme.textMute)
+                .padding(.top, 2)
 
             Text("长按桌面图标可添加到主屏幕，像 App 一样使用")
                 .font(.system(size: 11.5))
