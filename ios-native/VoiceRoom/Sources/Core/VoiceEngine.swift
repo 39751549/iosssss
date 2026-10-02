@@ -182,7 +182,7 @@ final class VoiceEngine: NSObject {
             }
         }
         if #available(iOS 17.0, *) {
-            AVAudioApplication.requestRecordPermission(onGranted)
+            AVAudioApplication.requestRecordPermission(completionHandler: onGranted)
         } else {
             AVAudioSession.sharedInstance().requestRecordPermission(onGranted)
         }
