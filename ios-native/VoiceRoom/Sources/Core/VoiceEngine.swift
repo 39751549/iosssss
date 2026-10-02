@@ -62,6 +62,23 @@ final class VoiceEngine: NSObject {
         let encoder = RTCDefaultVideoEncoderFactory()
         let decoder = RTCDefaultVideoDecoderFactory()
         factory = RTCPeerConnectionFactory(encoderFactory: encoder, decoderFactory: decoder)
+
+        // ★ 预建本地音轨（禁用态）：建每个连接时音轨随**首份 SDP** 一起协商出去。
+        // 之后开麦/闭麦只翻 track.isEnabled，**全程不存在「中途补音轨 + 重协商」**——
+        // 面包屑实测死点正是后者（对已运行的连接补音轨触发重协商即被系统杀掉，
+        // WebRTC 121/154 都一样）。这是 Clubhouse 类 App 的标准做法。
+        let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
+        if let f = factory {
+            let source = f.audioSource(with: constraints)
+            let track = f.audioTrack(with: source, trackId: "audio0")
+            track.isEnabled = false
+            audioTrack = track
+            let stream = f.mediaStream(withStreamId: "localStream")
+            stream.addAudioTrack(track)
+            localStream = stream
+            isMicOn = false
+            CrashReporter.crumb("voice: local track pre-created (disabled)")
+        }
     }
 
     // MARK: - 音频会话（按需激活，分「只听」和「说话」两档）
@@ -195,36 +212,15 @@ final class VoiceEngine: NSObject {
     private func startLocalAudio() {
         CrashReporter.crumb("voice: startLocalAudio enter")
         setupFactory()
-        guard localStream == nil, let factory else {
-            CrashReporter.crumb("voice: startLocalAudio skip (localStream=\(localStream != nil))")
+        // 音轨已在工厂创建时预建好、并随每个连接的首份 SDP 协商出去（禁用态）。
+        // 开麦 = 打开开关，不加轨、不重协商 —— 以前的死点在结构上不复存在。
+        guard let track = audioTrack else {
+            CrashReporter.crumb("voice: startLocalAudio FAIL (no track)")
             return
         }
-
-        // AEC/NS/AGC 由 WebRTC 音频处理默认开启，无需显式约束键
-        let constraints = RTCMediaConstraints(
-            mandatoryConstraints: nil,
-            optionalConstraints: nil
-        )
-        let source = factory.audioSource(with: constraints)
-        CrashReporter.crumb("voice: audioSource created")
-        let track = factory.audioTrack(with: source, trackId: "audio0")
-        audioTrack = track
-
-        let stream = factory.mediaStream(withStreamId: "localStream")
-        stream.addAudioTrack(track)
-        localStream = stream
+        track.isEnabled = true
         isMicOn = true
-        CrashReporter.crumb("voice: local track ready, peers=\(peers.count)")
-
-        // 已存在的连接补上本地音轨，并触发重协商。
-        // ⚠️ 必须传真实的 remoteId：以前传 nil 会被 renegotiate 的 guard 吞掉，
-        // 导致「先进房、后开麦」时房里其他人永远收不到我的音轨。
-        for (remoteId, pc) in peers {
-            CrashReporter.crumb("voice: renegotiate -> \(remoteId)")
-            pc.add(stream)
-            renegotiate(pc, remoteId: remoteId)
-        }
-        CrashReporter.crumb("voice: startLocalAudio done")
+        CrashReporter.crumb("voice: mic enabled via isEnabled (peers=\(peers.count))")
     }
 
     func setMicEnabled(_ enabled: Bool) {
@@ -283,7 +279,8 @@ final class VoiceEngine: NSObject {
         audioInit.direction = .sendRecv
         pc.addTransceiver(of: .audio, init: audioInit)
 
-        // 若已开麦则加入本地流
+        // 本地音轨（工厂创建时预建，禁用态）随首份 SDP 协商出去 ——
+        // 之后开麦只翻 isEnabled，不再有任何中途加轨/重协商
         if let stream = localStream {
             pc.add(stream)
         }
@@ -358,23 +355,10 @@ final class VoiceEngine: NSObject {
         pc.add(ice) { _ in }
     }
 
-    /// ICE 收集完成后重协商（开麦时已有连接需要补音轨）
-    private func renegotiate(_ pc: RTCPeerConnection, remoteId: String?) {
-        guard let remoteId else { return }
-        let constraints = RTCMediaConstraints(
-            mandatoryConstraints: ["OfferToReceiveAudio": "true"],
-            optionalConstraints: nil
-        )
-        pc.offer(for: constraints) { [weak self] sdp, error in
-            guard let self, let sdp, error == nil else { return }
-            pc.setLocalDescription(sdp) { err in
-                guard err == nil else { return }
-                DispatchQueue.main.async {
-                    self.onSignal?(.offer, remoteId, ["sdp": sdp.sdp])
-                }
-            }
-        }
-    }
+    // 说明：旧版这里有个 renegotiate()，用于「开麦后给已建立的连接补音轨」。
+    // 实测（WebRTC 121 与 154 皆然）这一步会被 iOS 系统直接杀掉 —— 即本次闪退真因。
+    // 现已改为工厂创建时预建音轨、建连接时随首份 SDP 协商出去，开麦只翻 isEnabled，
+    // 全程零重协商，此函数随之删除。
 
     func closePeer(_ remoteId: String) {
         levelTimers[remoteId]?.invalidate()
