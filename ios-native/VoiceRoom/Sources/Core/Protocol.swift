@@ -115,6 +115,8 @@ enum VRClientMessage {
     case shopBuy(frameId: String)
     /// 穿戴 / 脱下头像框（frameId 传空串表示脱下）
     case frameWear(frameId: String)
+    /// 上报上次崩溃日志（CrashReporter 捕获，登录成功后发）
+    case crashReport(log: String)
     // WebRTC 信令
     case rtcOffer(to: String, sdp: String)
     case rtcAnswer(to: String, sdp: String)
@@ -211,6 +213,9 @@ enum VRClientMessage {
 
         case let .frameWear(frameId):
             return ["type": "frame:wear", "frameId": frameId]
+
+        case let .crashReport(log):
+            return ["type": "crash:report", "log": log]
 
         case let .rtcOffer(to, sdp):
             return ["type": "rtc:offer", "to": to, "data": ["type": "offer", "sdp": sdp]]

@@ -119,6 +119,8 @@ final class AppState: ObservableObject {
     // MARK: - 生命周期
 
     init() {
+        // 崩溃捕获要先于一切业务逻辑装好，才能兜住启动期的问题
+        CrashReporter.install()
         connection.onMessage = { [weak self] msg in
             self?.handle(msg)
         }
@@ -261,6 +263,10 @@ final class AppState: ObservableObject {
             // 也保证 join 一定排在 auth 之后（顺序有保证，不用赌时序）。
             if inRoom, !lastRoomId.isEmpty {
                 connection.send(.roomJoin(userId: uid, roomId: lastRoomId, no: nil))
+            }
+            // 登录成功 = 链路可用 → 把上次崩溃的现场报给服务端（有则取走并清掉本地文件）
+            if let log = CrashReporter.consumeReport() {
+                connection.send(.crashReport(log: log))
             }
 
         case let .profileOK(user):
