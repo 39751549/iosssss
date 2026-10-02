@@ -103,8 +103,15 @@ final class MusicPlayer: NSObject, ObservableObject {
 
     private func configureSession() {
         // 音乐播放允许与其他音频共存（比如语音房的语音）
+        //
+        // ⚠️ 若 WebRTC 语音已在跑（会话已是 playAndRecord），**绝不能**再把
+        // category 切回 .playback —— WebRTC 音频单元运行中改 category 会直接
+        // 闪退（房里有人 + 晚创建本单例时的隐形炸弹）。playAndRecord 档下
+        // AVPlayer 照常能播，这里直接短路。
+        let session = AVAudioSession.sharedInstance()
+        guard session.category != .playAndRecord else { return }
         do {
-            try AVAudioSession.sharedInstance().setCategory(
+            try session.setCategory(
                 .playback,
                 mode: .default,
                 options: [.mixWithOthers]

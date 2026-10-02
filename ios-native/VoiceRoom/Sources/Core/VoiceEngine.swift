@@ -54,6 +54,9 @@ final class VoiceEngine: NSObject {
 
     private func setupFactory() {
         guard factory == nil else { return }
+        // 必须在创建工厂（WebRTC 音频单元诞生）之前把会话档位定成双向语音；
+        // 之后整个连接生命周期内都不再改 category。
+        prepareSessionForRTC()
         RTCInitializeSSL()
         let encoder = RTCDefaultVideoEncoderFactory()
         let decoder = RTCDefaultVideoDecoderFactory()
@@ -66,12 +69,50 @@ final class VoiceEngine: NSObject {
 
     enum AudioMode { case idle, listen, talk }
 
+    /// 把音频会话切到 WebRTC 需要的「双向语音」档。
+    ///
+    /// ⚠️ 只允许在 **WebRTC 工厂创建之前** 调用（setupFactory 开头会调）。
+    /// 只要 factory 已经存在，说明 WebRTC 的 Voice-Processing 音频单元可能正在跑
+    /// （房里有人、远端音频在播），这时从外部 setCategory 会直接闪退
+    /// （'com.apple.coreaudio.avfaudio' / 音频单元重启失败）——
+    /// 这是「房里有人一开麦就闪退」的根因。所以这里对「已是 playAndRecord」做了短路。
+    private func prepareSessionForRTC() {
+        let session = AVAudioSession.sharedInstance()
+        guard session.category != .playAndRecord else {
+            audioMode = .talk
+            return
+        }
+        do {
+            try session.setCategory(.playAndRecord,
+                                    mode: .voiceChat,
+                                    options: [.defaultToSpeaker, .allowBluetooth, .mixWithOthers])
+            try session.setActive(true)
+            audioMode = .talk
+        } catch {
+            print("[Voice] 语音会话配置失败: \(error.localizedDescription)")
+        }
+    }
+
     /// 进房但没开麦：只占播放通道，**不碰麦克风**（不会亮麦克风提示，也不会顶掉其他 App 音频）
+    ///
+    /// 注意：一旦 WebRTC 已经跑起来（factory 存在），会话档位必须是 .playAndRecord 且
+    /// **绝不能再切回 .playback** —— 否则又是开麦闪退的同一个坑。闭麦只是降档记录，
+    /// 不动 session 的 category。
     func enterListenMode() {
         // 注意守卫写的是 != .listen（而不是 != .talk）：
         // 闭麦时要能从 .talk **降档**回 .listen，写 != .talk 会把降档这条路堵死。
         guard audioMode != .listen else { return }
         let session = AVAudioSession.sharedInstance()
+        if factory != nil {
+            // WebRTC 已在运行：category 必须保持 .playAndRecord，只确保会话激活
+            do {
+                try session.setActive(true)
+                audioMode = .listen
+            } catch {
+                print("[Voice] 播放会话激活失败: \(error.localizedDescription)")
+            }
+            return
+        }
         do {
             try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
             try session.setActive(true)
@@ -84,10 +125,22 @@ final class VoiceEngine: NSObject {
     /// 开麦：切到双向语音（这一步开始系统会显示正在使用麦克风 —— 属于预期）
     func enterTalkMode() {
         let session = AVAudioSession.sharedInstance()
+        // WebRTC 已在跑 / 会话已是双向档：category 一个字都不能改（改 = 闪退），
+        // 只补一次激活和扬声器偏好。
+        if factory != nil || session.category == .playAndRecord {
+            do {
+                try session.setActive(true)
+            } catch {
+                print("[Voice] 语音会话激活失败: \(error.localizedDescription)")
+            }
+            audioMode = .talk
+            applySpeakerPreference()
+            return
+        }
         do {
             try session.setCategory(.playAndRecord,
                                     mode: .voiceChat,
-                                    options: [.defaultToSpeaker, .allowBluetooth])
+                                    options: [.defaultToSpeaker, .allowBluetooth, .mixWithOthers])
             try session.setActive(true)
             audioMode = .talk
             applySpeakerPreference()
@@ -152,10 +205,12 @@ final class VoiceEngine: NSObject {
         localStream = stream
         isMicOn = true
 
-        // 已存在的连接补上本地音轨，并触发重协商
-        for (_, pc) in peers {
+        // 已存在的连接补上本地音轨，并触发重协商。
+        // ⚠️ 必须传真实的 remoteId：以前传 nil 会被 renegotiate 的 guard 吞掉，
+        // 导致「先进房、后开麦」时房里其他人永远收不到我的音轨。
+        for (remoteId, pc) in peers {
             pc.add(stream)
-            renegotiate(pc, remoteId: nil)
+            renegotiate(pc, remoteId: remoteId)
         }
     }
 
