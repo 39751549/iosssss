@@ -255,8 +255,12 @@ final class VoiceEngine: NSObject {
     // MARK: - 建立 P2P 连接
 
     private func newPeerConnection(to remoteId: String) -> RTCPeerConnection? {
+        CrashReporter.crumb("voice: newPeerConnection -> \(remoteId)")
         setupFactory()
-        guard let factory else { return nil }
+        guard let factory else {
+            CrashReporter.crumb("voice: newPeerConnection FAIL (no factory)")
+            return nil
+        }
         if let existing = peers[remoteId] { return existing }
 
         let config = RTCConfiguration()
@@ -296,14 +300,20 @@ final class VoiceEngine: NSObject {
     /// 我主动发起 offer（新成员进房时，由老成员发起）
     func createOffer(to remoteId: String) {
         guard let pc = newPeerConnection(to: remoteId) else { return }
+        CrashReporter.crumb("voice: createOffer -> \(remoteId)")
 
         let constraints = RTCMediaConstraints(
             mandatoryConstraints: ["OfferToReceiveAudio": "true"],
             optionalConstraints: nil
         )
         pc.offer(for: constraints) { [weak self] sdp, error in
-            guard let self, let sdp, error == nil else { return }
+            guard let self, let sdp, error == nil else {
+                CrashReporter.crumb("voice: createOffer FAIL \(remoteId) \(error?.localizedDescription ?? "no sdp")")
+                return
+            }
+            CrashReporter.crumb("voice: offer got sdp, setLocal -> \(remoteId)")
             pc.setLocalDescription(sdp) { err in
+                CrashReporter.crumb("voice: setLocal done err=\(err?.localizedDescription ?? "nil") -> \(remoteId)")
                 guard err == nil else { return }
                 DispatchQueue.main.async {
                     self.onSignal?(.offer, remoteId, ["sdp": sdp.sdp])
@@ -313,11 +323,13 @@ final class VoiceEngine: NSObject {
     }
 
     func handleOffer(from remoteId: String, sdp: String) {
+        CrashReporter.crumb("voice: handleOffer from \(remoteId)")
         guard let pc = newPeerConnection(to: remoteId) else { return }
 
         let desc = RTCSessionDescription(type: .offer, sdp: sdp)
         pc.setRemoteDescription(desc) { [weak self] err in
             guard let self, err == nil else { return }
+            CrashReporter.crumb("voice: remote set, answering -> \(remoteId)")
             let constraints = RTCMediaConstraints(
                 mandatoryConstraints: ["OfferToReceiveAudio": "true"],
                 optionalConstraints: nil
@@ -325,6 +337,7 @@ final class VoiceEngine: NSObject {
             pc.answer(for: constraints) { answer, error in
                 guard let answer, error == nil else { return }
                 pc.setLocalDescription(answer) { err2 in
+                    CrashReporter.crumb("voice: answer setLocal done -> \(remoteId)")
                     guard err2 == nil else { return }
                     DispatchQueue.main.async {
                         self.onSignal?(.answer, remoteId, ["sdp": answer.sdp])
@@ -335,6 +348,7 @@ final class VoiceEngine: NSObject {
     }
 
     func handleAnswer(from remoteId: String, sdp: String) {
+        CrashReporter.crumb("voice: handleAnswer from \(remoteId)")
         guard let pc = peers[remoteId] else { return }
         let desc = RTCSessionDescription(type: .answer, sdp: sdp)
         pc.setRemoteDescription(desc) { _ in }

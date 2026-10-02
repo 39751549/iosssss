@@ -241,6 +241,25 @@ final class AppState: ObservableObject {
             giftList = gifts
             isLoggedIn = true
             kickedByOtherDevice = false
+
+            // ★★ 崩溃上报必须放在本 case 的**一切其他动作之前**（尤其自动回房之前）！
+            // 上次会话若死于「进房」，auto-rejoin 会立刻触发一模一样的崩溃，
+            // 上报代码就永远轮不到执行 —— 黑匣子此前收不到任何报告正是这个死循环：
+            // 重开 → 自动回房 → 秒崩 → 再重开……
+            let crashPart = CrashReporter.consumeReport()
+            let crumbPart = CrashReporter.tailCrumbs()
+            var skipRejoin = false
+            if crashPart != nil || crumbPart != nil {
+                var report = ""
+                if let crashPart { report += crashPart + "\n" }
+                if let crumbPart { report += "--- last actions ---\n" + crumbPart }
+                connection.send(.crashReport(log: String(report.prefix(8000))))
+                CrashReporter.clearCrumbs()
+                // 有崩溃记录的会话不自动回房：让用户停在大厅（可手动操作），
+                // 既打破死循环，也保证这份报告先发出去
+                skipRejoin = true
+            }
+
             // 登录成功：凭据落盘，下次自动登录
             if !pendingUsername.isEmpty {
                 savedUsername = pendingUsername
@@ -261,19 +280,8 @@ final class AppState: ObservableObject {
             // 断线重连后自动回到原来所在的房间。
             // 放在 authOK 里而不是 status 回调里：这样能保证服务端已认得这个身份，
             // 也保证 join 一定排在 auth 之后（顺序有保证，不用赌时序）。
-            if inRoom, !lastRoomId.isEmpty {
+            if inRoom, !lastRoomId.isEmpty, !skipRejoin {
                 connection.send(.roomJoin(userId: uid, roomId: lastRoomId, no: nil))
-            }
-            // 登录成功 = 链路可用 → 把上次崩溃的现场报给服务端（有则取走并清掉本地文件）。
-            // 就算没有异常记录，面包屑也能说明上次会话死在哪一步（如 watchdog 强杀）。
-            let crashPart = CrashReporter.consumeReport()
-            let crumbPart = CrashReporter.tailCrumbs()
-            if crashPart != nil || crumbPart != nil {
-                var report = ""
-                if let crashPart { report += crashPart + "\n" }
-                if let crumbPart { report += "--- last actions ---\n" + crumbPart }
-                connection.send(.crashReport(log: String(report.prefix(8000))))
-                CrashReporter.clearCrumbs()
             }
 
         case let .profileOK(user):
