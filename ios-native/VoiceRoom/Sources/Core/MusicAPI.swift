@@ -343,7 +343,7 @@ extension MusicAPI {
                   query: [URLQueryItem(name: "id", value: libraryId)]) { (r: Result<LyricResponse, Error>) in
             switch r {
             case .success(let d):
-                if d.ok { completion(.success(d.lyric)) }
+                if d.ok, let text = d.lyric { completion(.success(text)) }
                 else { completion(.failure(VRAPIError.empty)) }
             case .failure(let e): completion(.failure(e))
             }
