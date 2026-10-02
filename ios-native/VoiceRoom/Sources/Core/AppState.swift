@@ -231,6 +231,21 @@ final class AppState: ObservableObject {
         connection.disconnect()
     }
 
+    /// 手动上报诊断日志（设置页按钮）：不依赖自动上报链路，点了必发。
+    /// 把面包屑（最近动作）+ 版本号发给服务端，用于定位闪退。
+    func sendDiagnostics() {
+        let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
+        var report = "MANUAL-DIAG v\(ver) (\(build))\n"
+        if let c = CrashReporter.tailCrumbs() {
+            report += "--- last actions ---\n" + c
+        } else {
+            report += "(无面包屑记录)"
+        }
+        connection.send(.crashReport(log: String(report.prefix(8000))))
+        showToast("🩺 诊断已发送", kind: .success)
+    }
+
     // MARK: - 消息分发
 
     private func handle(_ msg: VRServerMessage) {
@@ -258,6 +273,7 @@ final class AppState: ObservableObject {
                 // 有崩溃记录的会话不自动回房：让用户停在大厅（可手动操作），
                 // 既打破死循环，也保证这份报告先发出去
                 skipRejoin = true
+                showToast("🩺 已自动上报上次崩溃", kind: .success)
             }
 
             // 登录成功：凭据落盘，下次自动登录

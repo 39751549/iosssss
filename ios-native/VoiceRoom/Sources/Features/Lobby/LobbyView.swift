@@ -749,6 +749,10 @@ struct LobbyView: View {
                 .foregroundColor(VRTheme.textMute)
                 .padding(.top, 2)
 
+            // 手动上报诊断日志：闪退排查用，点了必发、有弹窗确认
+            Button("🩺 上报诊断日志") { app.sendDiagnostics() }
+                .buttonStyle(VRButtonStyle(fullWidth: true))
+
             Text("长按桌面图标可添加到主屏幕，像 App 一样使用")
                 .font(.system(size: 11.5))
                 .foregroundColor(VRTheme.textMute)
