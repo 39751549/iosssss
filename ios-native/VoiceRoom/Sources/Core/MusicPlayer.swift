@@ -1,6 +1,8 @@
 import Foundation
 import AVFoundation
 import Combine
+import UIKit
+import QuartzCore
 
 /// 房间同步音乐播放器
 ///
@@ -63,6 +65,28 @@ final class MusicPlayer: NSObject, ObservableObject {
     /// attach 时 item 可能还没 ready，先把意图记下，ready 后再起播。
     private var wantPlaying = false
 
+    // MARK: 进度锚点（修复「切后台回来跳回旧时间点」）
+    //
+    // 快照里的 state.now 只代表**快照生成那一刻**的进度。回前台时 RoomView 会拿
+    // 缓存快照再 sync 一次 —— 若直接拿旧 now 算 elapsed，会得出一个落后于实际的
+    // 「应播进度」，drift>2s 的校正就把播放器 seek 回了旧时间点。
+    //
+    // 方案：快照到达时记录 (elapsed, 单调钟)，之后用单调钟插值得出「此刻应播进度」，
+    // 与快照是否陈旧彻底解耦。**只有严格更新的快照才允许重设锚点**，
+    // 同一份旧快照反复 sync 只会复用现有锚点，不会再把进度往回拨。
+    private var anchorElapsed: Double = 0
+    private var anchorAt: CFTimeInterval = 0
+    private var anchorNowMs: Double = 0
+    /// 最近一次 sync 的输入，供中断结束/回前台时重放
+    private var lastState: VRRoomState?
+    private var lastSpeakerOn = true
+
+    /// 此刻应该播到的进度 = 锚点 + 单调钟插值
+    private func expectedElapsed() -> Double {
+        guard anchorAt > 0 else { return 0 }
+        return max(0, anchorElapsed + CACurrentMediaTime() - anchorAt)
+    }
+
     /// 播放到本地缓存后的通知（用于 UI 刷新"已缓存"徽标）
     private var observers = Set<AnyCancellable>()
     private var progressObservers: [String: NSKeyValueObservation] = [:]
@@ -90,11 +114,16 @@ final class MusicPlayer: NSObject, ObservableObject {
         }
     }
 
-    /// 监听系统中断（来电等）与路由变化，避免回前台后状态错乱
+    /// 监听系统中断（来电等）、路由变化与前后台切换，避免回前台后状态错乱
     private func observeInterruptions() {
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleInterruption),
             name: AVAudioSession.interruptionNotification, object: nil
+        )
+        // 回前台自己恢复：不依赖视图层（RoomView 可能还没挂载），也绝不在这里 seek
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(appBecameActive),
+            name: UIApplication.didBecomeActiveNotification, object: nil
         )
     }
 
@@ -102,8 +131,43 @@ final class MusicPlayer: NSObject, ObservableObject {
         guard let info = note.userInfo,
               let raw = info[AVAudioSessionInterruptionTypeKey] as? UInt,
               let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
-        // 中断结束时不自动播放，交给下一次房间快照 sync 校准（避免与全房状态冲突）
-        if type == .ended { isPlaying = false }
+        if type == .began {
+            // 别的 App 抢占音频（开视频/放歌）：AVPlayer 已被系统暂停，同步一下 UI
+            isPlaying = false
+            return
+        }
+        // 中断结束：系统说 shouldResume 才自动续播（用户主动去放别的 App 时不抢）。
+        // 之前只在回调里把 isPlaying 置 false、从不清醒会话，
+        // AVPlayer.play() 面对一个被中断挂起的会话是唤不醒的 —— 这就是
+        // 「切去别的软件再回来音乐停着不动」的根因。
+        guard type == .ended else { return }
+        let optRaw = (info[AVAudioSessionInterruptionOptionKey] as? UInt) ?? 0
+        let opts = AVAudioSession.InterruptionOptions(rawValue: optRaw)
+        guard opts.contains(.shouldResume) else { return }
+        // 稍等系统收尾，再重新激活会话并接着播；进度交给下一次 sync 校准
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            self?.recoverAfterForeground()
+        }
+    }
+
+    @objc private func appBecameActive() {
+        recoverAfterForeground()
+    }
+
+    /// 切后台回来 / 中断恢复：重新激活音频会话并接着播。
+    ///
+    /// 铁律：**这里绝不 seek**。本地缓存快照的 now 是旧的，拿它校正是
+    /// 「回跳到某个时间点」的根源。真正的进度对齐交给 AppState 回前台
+    /// requestRoomSync() 拉到的新鲜快照，由 sync() 的锚点机制静默完成。
+    func recoverAfterForeground() {
+        guard player != nil, !currentSongKey.isEmpty else { return }
+        // 说话模式（playAndRecord）下会话本来就是活的，重复激活无害；
+        // 只听模式下被系统挂起后必须重新 setActive，否则 play() 不出声
+        do { try AVAudioSession.sharedInstance().setActive(true) } catch { /* 忽略 */ }
+        if wantPlaying, player?.rate == 0, !isLoading {
+            player?.play()
+            isPlaying = true
+        }
     }
 
     /// 切换 player 时重建进度观察（player 是懒创建的，attach 时挂到具体 player 上）
@@ -157,6 +221,9 @@ final class MusicPlayer: NSObject, ObservableObject {
         // 扬声器开关以房间状态为准（避免重启/重连后静音态与 UI 不一致）
         muted = !speakerOn
         player?.isMuted = muted
+        // 留一份最近快照，中断结束/回前台时重放 sync 用
+        lastState = state
+        lastSpeakerOn = speakerOn
 
         if changed {
             needsReload = false
@@ -176,23 +243,36 @@ final class MusicPlayer: NSObject, ObservableObject {
 
         if state.playing {
             if !changed {
-                // 同一首歌：只做进度校准，绝不重新加载
+                // 同一首歌：只做进度校准，绝不重新加载。
+                // 应播进度用「锚点 + 单调钟插值」，而不是快照里的旧 now ——
+                // 旧快照重复 sync（回前台场景）不会把锚点拨回过去，也就不会回跳。
                 let elapsed = state.startedAt > 0 ? (state.now - state.startedAt) / 1000.0 : 0
+                if state.now > anchorNowMs {
+                    anchorNowMs = state.now
+                    anchorElapsed = elapsed
+                    anchorAt = CACurrentMediaTime()
+                }
+                let expected = expectedElapsed()
                 let current = CMTimeGetSeconds(player.currentTime())
                 if reachedEnd {
                     // 播完又要求播放（单曲循环 / 单曲歌单循环）：
                     // AVPlayer 停在末尾，必须显式回到起点（或服务端给的进度）才能重新出声
-                    let target = CMTime(seconds: max(0, elapsed), preferredTimescale: 600)
+                    let target = CMTime(seconds: max(0, expected), preferredTimescale: 600)
                     player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
                     reachedEnd = false
                 } else {
-                    let drift = abs(current - elapsed)
+                    let drift = abs(current - expected)
                     // 误差超过 2 秒且已过 3 秒缓冲才校正，避免频繁 seek 造成卡顿
-                    if elapsed > 3, current.isFinite, drift > 2 {
-                        let target = CMTime(seconds: max(0, elapsed), preferredTimescale: 600)
+                    if expected > 3, current.isFinite, drift > 2 {
+                        let target = CMTime(seconds: max(0, expected), preferredTimescale: 600)
                         player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
                     }
                 }
+            } else {
+                // 换了新歌/新直链：锚点跟着重置（elapsed 已按新歌计算，接近 0）
+                anchorNowMs = state.now
+                anchorElapsed = state.startedAt > 0 ? (state.now - state.startedAt) / 1000.0 : 0
+                anchorAt = CACurrentMediaTime()
             }
             if player.rate == 0, !isLoading {
                 player.play()
@@ -442,6 +522,11 @@ final class MusicPlayer: NSObject, ObservableObject {
         reachedEnd = false
         needsReload = false
         wantPlaying = false
+        anchorElapsed = 0
+        anchorAt = 0
+        anchorNowMs = 0
+        lastState = nil
+        lastSpeakerOn = true
         observers.removeAll()
         progressObservers.removeAll()
         reloadRequestedFor.removeAll()

@@ -107,9 +107,12 @@ struct RoomView: View {
             UserCardSheet(member: t.member, state: state).environmentObject(app)
         }
         .onChange(of: scenePhase) { phase in
-            // 从后台回到前台时，重新对齐一次音乐进度
-            if phase == .active, let st = app.roomState {
-                MusicPlayer.shared.sync(with: st, speakerOn: app.speakerEnabled)
+            // 回前台：只做「重新激活会话 + 接着播」，绝不拿缓存快照 sync ——
+            // 缓存快照的 now 是切后台前的旧时间戳，用它校准会把进度 seek 回旧时间点。
+            // 真正的进度对齐由 AppState.appDidBecomeActive() 的 requestRoomSync()
+            // 拉到新鲜快照后，sync() 的锚点机制静默完成。
+            if phase == .active {
+                MusicPlayer.shared.recoverAfterForeground()
             }
         }
     }
