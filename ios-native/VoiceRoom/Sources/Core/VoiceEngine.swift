@@ -287,11 +287,17 @@ final class VoiceEngine: NSObject {
         pc.addTransceiver(of: .audio, init: audioInit)
         CrashReporter.crumb("voice: transceiver added -> \(remoteId)")
 
-        // 本地音轨（工厂创建时预建，禁用态）随首份 SDP 协商出去 ——
-        // 之后开麦只翻 isEnabled，不再有任何中途加轨/重协商
-        if let stream = localStream {
-            pc.add(stream)
-            CrashReporter.crumb("voice: pre-created stream added -> \(remoteId)")
+        // 本地音轨（工厂创建时预建，禁用态）挂到连接上，随首份 SDP 协商出去 ——
+        // 之后开麦只翻 isEnabled，不再有任何中途加轨/重协商。
+        //
+        // ⚠️ 不用老 API pc.add(stream)：面包屑三轮实测（v1.2/v1.7/v1.8，WebRTC
+        // 121 与 154 都一样），老 API 在这台 iOS 15.1.1 设备上一执行、进程即被
+        // 无声杀掉（无异常无信号）—— 这才是贯穿始终的真死点。
+        // 换 flutter-webrtc 同款的现代 API addTrack(_:streams:)。
+        if let track = audioTrack {
+            CrashReporter.crumb("voice: addTrack begin -> \(remoteId)")
+            pc.addTrack(track, streams: localStream.map { [$0] } ?? [])
+            CrashReporter.crumb("voice: addTrack done -> \(remoteId)")
         }
 
         let proxy = PeerDelegateProxy(remoteId: remoteId, engine: self)
