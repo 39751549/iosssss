@@ -232,11 +232,15 @@ final class AppState: ObservableObject {
     }
 
     /// 手动上报诊断日志（设置页按钮）：不依赖自动上报链路，点了必发。
-    /// 把面包屑（最近动作）+ 版本号发给服务端，用于定位闪退。
+    /// 内容 = 存储自诊断（磁盘为何写不了的原始错误）+ 崩溃报告（如有）+ 面包屑（内存+磁盘）。
     func sendDiagnostics() {
         let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
         var report = "MANUAL-DIAG v\(ver) (\(build))\n"
+        report += CrashReporter.diagnoseStorage() + "\n"
+        if let crash = CrashReporter.peekReport() {
+            report += "--- crash report ---\n" + crash + "\n"
+        }
         if let c = CrashReporter.tailCrumbs() {
             report += "--- last actions ---\n" + c
         } else {

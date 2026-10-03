@@ -38,14 +38,30 @@ enum CrashReporter {
         return dir.appendingPathComponent("vr-crumb.log")
     }
 
+    /// 内存面包屑：磁盘写入在用户设备上实测会静默失败（try? 吞掉错误），
+    /// 所以同时存一份在内存里。App 活着的时候（比如手动点诊断按钮）内存一定可读；
+    /// 崩溃后内存丢失，则回落读磁盘文件。
+    private static var memCrumbs: [String] = []
+    private static let memCrumbsMax = 150
+
     static func crumb(_ s: String) {
-        let line = "\(Int(Date().timeIntervalSince1970)) \(s)\n"
+        let line = "\(Int(Date().timeIntervalSince1970)) \(s)"
+        memCrumbs.append(line)
+        if memCrumbs.count > memCrumbsMax {
+            memCrumbs.removeFirst(memCrumbs.count - memCrumbsMax)
+        }
+        let text = line + "\n"
         if let fh = try? FileHandle(forWritingTo: crumbURL) {
             defer { try? fh.close() }
             fh.seekToEndOfFile()
-            fh.write(line.data(using: .utf8)!)
+            fh.write(text.data(using: .utf8)!)
         } else {
-            try? ("=== crumbs ===\n" + line).write(to: crumbURL, atomically: true, encoding: .utf8)
+            do {
+                try ("=== crumbs ===\n" + text).write(to: crumbURL, atomically: true, encoding: .utf8)
+            } catch {
+                // 磁盘写失败不再静默：把错误存进内存面包屑，诊断按钮能看到
+                memCrumbs.append("CRUMB-DISK-ERR: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -86,6 +102,7 @@ enum CrashReporter {
         crumb("device: \(UIDevice.current.model) \(UIDevice.current.systemName) "
             + UIDevice.current.systemVersion
             + " build\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?")")
+        crumb("app: launch")
     }
 
     /// 取走上次崩溃的报告（有则返回内容并删除本地文件，避免重复上报）
@@ -96,11 +113,55 @@ enum CrashReporter {
         return String(text.prefix(8000))
     }
 
-    /// 面包屑尾部（用于即使没有异常记录、疑似被强杀时，也能看到死前最后动作）
+    /// 只读不删：手动诊断时看一眼有没有崩溃报告文件
+    static func peekReport() -> String? {
+        guard let text = try? String(contentsOf: fileURL, encoding: .utf8),
+              !text.isEmpty else { return nil }
+        return String(text.prefix(4000))
+    }
+
+    /// 存储自诊断：把「磁盘为什么写不了」的原始事实发回来。
+    /// 用户设备实测面包屑从未落盘成功，错误全被 try? 吞掉 —— 这里逐项打印不再吞。
+    static func diagnoseStorage() -> String {
+        var out = "--- storage diag ---\n"
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        out += "dir: \(dir.path)\n"
+        out += "dirExists: \(FileManager.default.fileExists(atPath: dir.path))\n"
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            out += "mkdir: ok\n"
+        } catch {
+            out += "mkdir: ERR \(error)\n"
+        }
+        let testFile = dir.appendingPathComponent("vr-write-test.txt")
+        do {
+            try "t".write(to: testFile, atomically: true, encoding: .utf8)
+            out += "testWrite: ok\n"
+            try? FileManager.default.removeItem(at: testFile)
+        } catch {
+            out += "testWrite: ERR \(error)\n"
+        }
+        if FileManager.default.fileExists(atPath: crumbURL.path) {
+            let size = (try? FileManager.default.attributesOfItem(atPath: crumbURL.path)[.size]) ?? "?"
+            out += "crumbFile: exists size=\(size)\n"
+        } else {
+            out += "crumbFile: MISSING\n"
+        }
+        out += "memCrumbs: \(memCrumbs.count) lines\n"
+        return out
+    }
+
+    /// 面包屑尾部：磁盘（上次崩溃会话遗留）在前，内存（本次会话）在后，合并返回。
+    /// 崩溃重开后：磁盘有上次会话记录 → 自动上报拿到的正是崩溃现场；
+    /// 手动诊断时：内存必有本次会话动作 → 一定有内容可发。
     static func tailCrumbs(_ limit: Int = 40) -> String? {
-        guard let text = try? String(contentsOf: crumbURL, encoding: .utf8) else { return nil }
-        let lines = text.split(separator: "\n").suffix(limit)
-        return lines.isEmpty ? nil : lines.joined(separator: "\n")
+        var lines: [String] = []
+        if let text = try? String(contentsOf: crumbURL, encoding: .utf8) {
+            lines += text.split(separator: "\n").map(String.init)
+        }
+        lines += memCrumbs
+        let tail = lines.suffix(limit)
+        return tail.isEmpty ? nil : tail.joined(separator: "\n")
     }
 
     static func clearCrumbs() {
