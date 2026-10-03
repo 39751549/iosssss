@@ -104,8 +104,9 @@ final class VoiceEngine: NSObject {
         CrashReporter.crumb("voice: switching category -> playAndRecord (factory=nil)")
         do {
             // 注意：playAndRecord + voiceChat 模式下不带 .mixWithOthers ——
-            // 该组合在 iOS 26 上与 WebRTC 的 VPIO 重配冲突（面包屑实测死点）。
-            // 房间音乐是本 App 自己的 AVPlayer，走同一个会话，不受影响。
+            // voiceChat 模式下该组合本身就可疑（可能与 WebRTC 的 VPIO 重配冲突），
+            // 参照 flutter-webrtc 标准配置去掉。房间音乐是本 App 自己的 AVPlayer，
+            // 走同一个会话，不受影响。
             try session.setCategory(.playAndRecord,
                                     mode: .voiceChat,
                                     options: [.defaultToSpeaker, .allowBluetooth])
@@ -274,19 +275,23 @@ final class VoiceEngine: NSObject {
                                               optionalConstraints: nil)
 
         guard let pc = factory.peerConnection(with: config, constraints: constraints, delegate: nil) else {
+            CrashReporter.crumb("voice: peerConnection FAIL (nil) -> \(remoteId)")
             return nil
         }
+        CrashReporter.crumb("voice: pc created -> \(remoteId)")
 
         // 音频收发：unifiedPlan 下用 transceiver 显式声明收发方向，
         // 这样即使还没开麦，也能收到对方的音频
         let audioInit = RTCRtpTransceiverInit()
         audioInit.direction = .sendRecv
         pc.addTransceiver(of: .audio, init: audioInit)
+        CrashReporter.crumb("voice: transceiver added -> \(remoteId)")
 
         // 本地音轨（工厂创建时预建，禁用态）随首份 SDP 协商出去 ——
         // 之后开麦只翻 isEnabled，不再有任何中途加轨/重协商
         if let stream = localStream {
             pc.add(stream)
+            CrashReporter.crumb("voice: pre-created stream added -> \(remoteId)")
         }
 
         let proxy = PeerDelegateProxy(remoteId: remoteId, engine: self)

@@ -23,11 +23,14 @@ let package = Package(
     dependencies: [
         // Google 官方 WebRTC 预编译包
         //
-        // ⚠️ 必须保持跟进新版本：M121 是 2024 年的二进制，早于 iOS 26 的新
-        // CoreAudio/VoiceProcessingIO 行为，实测在 iOS 26 上「对运行中的音频单元
-        // 启动录音」会被系统直接干掉（开麦闪退，且任何异常钩子都抓不到）。
-        // M154（2026-09）已适配新系统。
-        .package(url: "https://github.com/stasel/WebRTC.git", from: "154.0.0")
+        // ⚠️ 版本适配是双刃剑，实测结论（2026-10）：
+        // - M121：在 iOS 13~17 上久经考验；唯一问题是「中途补音轨+重协商」会崩 ——
+        //   该路径已通过「预建禁用音轨、开麦只翻 isEnabled」从代码中根除。
+        // - M154：为 iOS 26 而生，但其新音频设备模块（ADM）在 **iOS 15.1.1** 上
+        //   连建立 P2P 连接（pc 创建 / addTransceiver / addTrack）都会被当场杀死
+        //   （面包屑实测，无任何异常/信号）。用户设备就是 iOS 15.1.1。
+        // 结论：钉在 121，配合零重协商架构，两头都绕开。
+        .package(url: "https://github.com/stasel/WebRTC.git", from: "121.0.0")
     ],
     targets: [
         .target(
