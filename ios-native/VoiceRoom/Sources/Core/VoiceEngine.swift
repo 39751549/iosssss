@@ -296,7 +296,7 @@ final class VoiceEngine: NSObject {
         // 换 flutter-webrtc 同款的现代 API addTrack(_:streams:)。
         if let track = audioTrack {
             CrashReporter.crumb("voice: addTrack begin -> \(remoteId)")
-            pc.addTrack(track, streamIds: ["localStream"])
+            pc.add(track, streamIds: ["localStream"])
             CrashReporter.crumb("voice: addTrack done -> \(remoteId)")
         }
 
